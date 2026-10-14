@@ -1,6 +1,7 @@
 # RepoMind
 
 Day 2: a local ASP.NET Core API that generates text embeddings using Ollama.
+Day 3: a local PostgreSQL database with pgvector enabled.
 
 ## Run
 
@@ -50,3 +51,28 @@ No AI SDK or third-party NuGet packages are required.
 Reference: [Ollama embeddings documentation](https://docs.ollama.com/capabilities/embeddings).
 
 Database storage, similarity search, RAG, frontend work, and agents belong to later days.
+
+## Day 3: PostgreSQL and pgvector
+
+Prerequisite: Docker Desktop with Docker Compose available from your terminal.
+From the repository root, start the database:
+
+```powershell
+docker compose up -d db
+docker compose ps
+```
+
+Once `db` is healthy, check the extension:
+
+```powershell
+docker compose exec db psql -U repomind -d repomind -c "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';"
+```
+
+Expect one row named `vector`. The database is available only on your machine at
+`localhost:5432`, with database/user `repomind` and password `localdev`. These are
+local development credentials; change them before using this setup elsewhere.
+The named Docker volume keeps data between container restarts. `database/init.sql`
+runs only when PostgreSQL initializes a new, empty volume.
+
+To stop the database while retaining its data, run `docker compose down`.
+The API does not connect to PostgreSQL yet; storing embeddings is a later step.

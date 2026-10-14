@@ -89,10 +89,15 @@ Results:
 - Authentication vs Login: 0.66566
 - Authentication vs Leaflet: 0.34564
 
-Day 2: In progress.
+Day 2: Completed.
 
 Goal:
 Create an ASP.NET Core Web API with an EmbeddingService that calls the local Ollama `/api/embed` endpoint.
+
+Day 3: Completed.
+
+Goal:
+Configure local PostgreSQL with pgvector using Docker Compose, and verify that the `vector` extension is enabled.
 
 ## Important
 
