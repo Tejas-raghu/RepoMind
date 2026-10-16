@@ -99,6 +99,11 @@ Day 3: Completed.
 Goal:
 Configure local PostgreSQL with pgvector using Docker Compose, and verify that the `vector` extension is enabled.
 
+Day 4: Completed.
+
+Goal:
+Store text and its `embeddinggemma` vector in PostgreSQL through the API.
+
 ## Important
 
 Implement only the current day's tasks unless explicitly instructed otherwise. Explain AI-related logic so the developer understands the implementation.

@@ -2,6 +2,7 @@
 
 Day 2: a local ASP.NET Core API that generates text embeddings using Ollama.
 Day 3: a local PostgreSQL database with pgvector enabled.
+Day 4: save text and its Ollama embedding in PostgreSQL.
 
 ## Run
 
@@ -46,11 +47,11 @@ The injected `HttpClient` is managed by ASP.NET Core. Calls use async/await so t
 server does not block a thread while Ollama works. The request cancellation token
 flows through the HTTP call so a disconnected client can cancel the work.
 `truncate: false` avoids silently discarding text beyond the model's context limit.
-No AI SDK or third-party NuGet packages are required.
+The Day 2 endpoint needs no AI SDK or third-party NuGet package.
 
 Reference: [Ollama embeddings documentation](https://docs.ollama.com/capabilities/embeddings).
 
-Database storage, similarity search, RAG, frontend work, and agents belong to later days.
+Similarity search, RAG, frontend work, and agents belong to later days.
 
 ## Day 3: PostgreSQL and pgvector
 
@@ -75,4 +76,33 @@ The named Docker volume keeps data between container restarts. `database/init.sq
 runs only when PostgreSQL initializes a new, empty volume.
 
 To stop the database while retaining its data, run `docker compose down`.
-The API does not connect to PostgreSQL yet; storing embeddings is a later step.
+
+## Day 4: Store embeddings
+
+Start PostgreSQL and Ollama as above. Apply the schema from the repository root:
+
+```powershell
+docker compose exec db psql -U repomind -d repomind -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/01-init.sql
+```
+
+This step is needed for the existing Day 3 Docker volume because PostgreSQL only
+runs `init.sql` automatically when the volume is first created. The SQL is safe to
+run again. Then run the API with the command above and save one example:
+
+```powershell
+$body = @{ text = 'Authentication validates a user before granting access.' } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:5000/api/embeddings/store -ContentType 'application/json' -Body $body
+docker compose exec db psql -U repomind -d repomind -c "SELECT id, content, model, vector_dims(embedding) AS dimensions FROM stored_embeddings ORDER BY id DESC LIMIT 5;"
+```
+
+The API response contains the new row ID, `embeddinggemma`, and `768` dimensions.
+The query should show the same ID and text. Each request inserts a new row.
+
+`EmbeddingService` turns text into a list of numbers whose position captures some
+of its meaning. `EmbeddingStore` writes those numbers as a pgvector `vector`, along
+with the source text and model name. The insert uses parameters so text is treated
+as data. `vector(768)` matches the configured `embeddinggemma` model; switching
+models with a different dimension will require a schema change. The route accepts
+the same `text` request as `/api/embeddings`, but returns row metadata instead of
+the full vector. The PostgreSQL connection string in `appsettings.json` is for
+local development and can be overridden with `ConnectionStrings__RepoMind`.
