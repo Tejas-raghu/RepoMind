@@ -104,6 +104,11 @@ Day 4: Completed.
 Goal:
 Store text and its `embeddinggemma` vector in PostgreSQL through the API.
 
+Day 5: Completed.
+
+Goal:
+Search stored text by cosine similarity using a query embedding and pgvector.
+
 ## Important
 
 Implement only the current day's tasks unless explicitly instructed otherwise. Explain AI-related logic so the developer understands the implementation.

@@ -8,3 +8,5 @@ public sealed record EmbeddingResponse(string Model, float[] Embedding)
 }
 
 public sealed record StoredEmbeddingResponse(long Id, string Model, int Dimensions);
+
+public sealed record SimilarEmbeddingResponse(long Id, string Content, string Model, double Similarity);

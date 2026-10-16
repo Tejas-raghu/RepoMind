@@ -3,6 +3,7 @@
 Day 2: a local ASP.NET Core API that generates text embeddings using Ollama.
 Day 3: a local PostgreSQL database with pgvector enabled.
 Day 4: save text and its Ollama embedding in PostgreSQL.
+Day 5: search saved text by cosine similarity.
 
 ## Run
 
@@ -106,3 +107,23 @@ models with a different dimension will require a schema change. The route accept
 the same `text` request as `/api/embeddings`, but returns row metadata instead of
 the full vector. The PostgreSQL connection string in `appsettings.json` is for
 local development and can be overridden with `ConnectionStrings__RepoMind`.
+
+## Day 5: Similarity search
+
+With PostgreSQL, Ollama, and the API running, save at least two different texts
+using `/api/embeddings/store`. Then search with a related question:
+
+```powershell
+$body = @{ text = 'How does login verify a user?' } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:5000/api/embeddings/search -ContentType 'application/json' -Body $body
+```
+
+The response is a list containing the closest stored text. The result includes
+its row ID, text, model, and similarity score.
+If the table has no rows for the configured model, the response is an empty list.
+
+The API embeds the question using the same model used to store the texts. In SQL,
+`<=>` computes cosine distance between vectors; `1 - distance` gives cosine
+similarity, so higher scores mean closer meanings. The query filters by model to
+avoid comparing embeddings from different models. It scans the small table for
+now; an approximate index can wait until there is enough data to need one.

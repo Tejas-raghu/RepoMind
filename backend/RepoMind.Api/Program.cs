@@ -108,4 +108,49 @@ app.MapPost("/api/embeddings/store", async (
     }
 });
 
+app.MapPost("/api/embeddings/search", async (
+    EmbeddingRequest request,
+    EmbeddingService service,
+    EmbeddingStore store,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Text))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["text"] = ["Text must not be empty."]
+        });
+    }
+
+    try
+    {
+        var query = await service.GenerateAsync(request.Text, cancellationToken);
+        return Results.Ok(await store.SearchAsync(query.Model, query.Embedding, cancellationToken));
+    }
+    catch (NpgsqlException exception)
+    {
+        logger.LogWarning(exception, "Could not search embeddings.");
+        return Results.Problem("Check that PostgreSQL is running and the Day 4 table exists.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (HttpRequestException exception)
+    {
+        logger.LogWarning(exception, "Ollama embedding request failed.");
+        return Results.Problem("Check that Ollama is running and embeddinggemma is installed. Also check the input length.",
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem("Ollama or PostgreSQL did not respond within two minutes.",
+            statusCode: StatusCodes.Status504GatewayTimeout);
+    }
+    catch (JsonException exception)
+    {
+        logger.LogWarning(exception, "Ollama returned an invalid response.");
+        return Results.Problem("Ollama returned an invalid embedding response.",
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+});
+
 app.Run();
