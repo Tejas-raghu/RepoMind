@@ -1,12 +1,19 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.Features;
 using Npgsql;
 using Pgvector.Npgsql;
 using RepoMind.Api.Contracts;
 using RepoMind.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+// Local runs may not have permission to write to the Windows Event Log.
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
 
-builder.Services.AddHttpClient<EmbeddingService>(client =>
+builder.Services.Configure<FormOptions>(options =>
+    options.MultipartBodyLengthLimit = RepositoryZipReader.MaxUploadBytes + 256 * 1024);
+
+builder.Services.AddHttpClient<IEmbeddingService, EmbeddingService>(client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
         ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
@@ -22,12 +29,14 @@ builder.Services.AddSingleton(_ =>
     return dataSourceBuilder.Build();
 });
 builder.Services.AddScoped<EmbeddingStore>();
+builder.Services.AddSingleton<RepositoryZipReader>();
+builder.Services.AddScoped<RepositoryUploadService>();
 
 var app = builder.Build();
 
 app.MapPost("/api/embeddings", async (
     EmbeddingRequest request,
-    EmbeddingService service,
+    IEmbeddingService service,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
 {
@@ -64,7 +73,7 @@ app.MapPost("/api/embeddings", async (
 
 app.MapPost("/api/embeddings/store", async (
     EmbeddingRequest request,
-    EmbeddingService service,
+    IEmbeddingService service,
     EmbeddingStore store,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
@@ -110,7 +119,7 @@ app.MapPost("/api/embeddings/store", async (
 
 app.MapPost("/api/embeddings/search", async (
     EmbeddingRequest request,
-    EmbeddingService service,
+    IEmbeddingService service,
     EmbeddingStore store,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
@@ -150,6 +159,83 @@ app.MapPost("/api/embeddings/search", async (
         logger.LogWarning(exception, "Ollama returned an invalid response.");
         return Results.Problem("Ollama returned an invalid embedding response.",
             statusCode: StatusCodes.Status502BadGateway);
+    }
+});
+
+app.MapPost("/api/repositories/upload", async (
+    HttpRequest request,
+    RepositoryUploadService upload,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!request.HasFormContentType)
+        return Results.Problem("Send multipart/form-data with one field named file.", statusCode: 415);
+    if (request.ContentLength > RepositoryZipReader.MaxUploadBytes + 256 * 1024)
+        return Results.Problem("Upload exceeds the 5 MB ZIP limit.", statusCode: 413);
+
+    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    timeout.CancelAfter(TimeSpan.FromMinutes(30));
+    try
+    {
+        var form = await request.ReadFormAsync(timeout.Token);
+        if (form.Files.Count != 1 || form.Files[0].Name != "file")
+            return Results.Problem("Provide exactly one ZIP file in the file field.", statusCode: 400);
+        var file = form.Files[0];
+        if (!file.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            return Results.Problem("Only .zip files are supported.", statusCode: 415);
+        if (file.Length == 0)
+            return Results.Problem("ZIP file is empty.", statusCode: 400);
+        if (file.Length > RepositoryZipReader.MaxUploadBytes)
+            return Results.Problem("Upload exceeds the 5 MB ZIP limit.", statusCode: 413);
+
+        await using var fileStream = file.OpenReadStream();
+        using var zipBytes = new MemoryStream();
+        var block = new byte[8192];
+        int read;
+        while ((read = await fileStream.ReadAsync(block, timeout.Token)) > 0)
+        {
+            if (zipBytes.Length + read > RepositoryZipReader.MaxUploadBytes)
+                return Results.Problem("Upload exceeds the 5 MB ZIP limit.", statusCode: 413);
+            zipBytes.Write(block, 0, read);
+        }
+        zipBytes.Position = 0;
+
+        return Results.Ok(await upload.UploadAsync(file.FileName, zipBytes, timeout.Token));
+    }
+    catch (UnsafeZipPathException)
+    {
+        return Results.Problem("ZIP contains an absolute or traversal path.", statusCode: 400);
+    }
+    catch (InvalidDataException)
+    {
+        return Results.Problem("ZIP is invalid or contains no supported source files.", statusCode: 400);
+    }
+    catch (NotSupportedException)
+    {
+        return Results.Problem("ZIP uses an unsupported format.", statusCode: 400);
+    }
+    catch (IOException)
+    {
+        return Results.Problem("ZIP could not be read.", statusCode: 400);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Repository upload could not reach PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or the Day 6 migration is missing.", statusCode: 503);
+    }
+    catch (HttpRequestException)
+    {
+        logger.LogWarning("Repository upload could not reach Ollama.");
+        return Results.Problem("Ollama could not generate an embedding.", statusCode: 502);
+    }
+    catch (JsonException)
+    {
+        logger.LogWarning("Ollama returned an invalid embedding during repository upload.");
+        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem("Repository upload timed out.", statusCode: 504);
     }
 });
 

@@ -109,6 +109,11 @@ Day 5: Completed.
 Goal:
 Search stored text by cosine similarity using a query embedding and pgvector.
 
+Day 6: Completed.
+
+Goal:
+Upload a small trusted source ZIP and store line-based code chunks with source references.
+
 ## Important
 
 Implement only the current day's tasks unless explicitly instructed otherwise. Explain AI-related logic so the developer understands the implementation.

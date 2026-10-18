@@ -4,6 +4,7 @@ Day 2: a local ASP.NET Core API that generates text embeddings using Ollama.
 Day 3: a local PostgreSQL database with pgvector enabled.
 Day 4: save text and its Ollama embedding in PostgreSQL.
 Day 5: search saved text by cosine similarity.
+Day 6: upload a trusted source ZIP and store indexed code chunks.
 
 ## Run
 
@@ -127,3 +128,51 @@ The API embeds the question using the same model used to store the texts. In SQL
 similarity, so higher scores mean closer meanings. The query filters by model to
 avoid comparing embeddings from different models. It scans the small table for
 now; an approximate index can wait until there is enough data to need one.
+
+## Day 6: Upload a trusted repository ZIP
+
+Start PostgreSQL and Ollama. On an existing Day 3–5 database, apply the new
+idempotent migration before starting the API:
+
+```powershell
+docker compose up -d db
+docker compose exec db psql -U repomind -d repomind -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/02-repository-upload.sql
+dotnet run --project backend/RepoMind.Api --no-launch-profile --urls http://localhost:5000
+```
+
+In another PowerShell terminal, create a small ZIP for practice and upload it:
+
+```powershell
+Compress-Archive -Path backend/RepoMind.Api/Contracts/EmbeddingDtos.cs,backend/RepoMind.Api/Services/EmbeddingStore.cs -DestinationPath sample-repo.zip -Force
+curl.exe -F "file=@sample-repo.zip" http://localhost:5000/api/repositories/upload
+```
+
+Expect `repositoryId`, `status: completed`, `filesIndexed`, `chunksCreated`, and
+`filesSkipped`. Check the indexed lines and embedding dimensions:
+
+```powershell
+docker compose exec db psql -U repomind -d repomind -c "SELECT repository_id, source_path, start_line, end_line, vector_dims(embedding) AS dimensions FROM repository_chunks ORDER BY id DESC LIMIT 5;"
+```
+
+The endpoint reads `.cs`, `.ts`, `.tsx`, `.js`, `.jsx`, `.vue`, `.json`, `.md`, and `.html`
+directly from the ZIP. It never extracts source files. It rejects absolute and
+traversal paths, and skips hidden, generated, secret/config-sensitive, binary,
+oversized, and unsupported files. The ZIP limit is 5 MB; it accepts at most 100
+files, 250 KB per file, and 10 MB total uncompressed content. Code is split into
+60-line chunks with 10 overlapping lines; unusually long windows are split into
+pieces of at most 2,000 characters. Each chunk gets an Ollama embedding
+and a row linked to its repository. HTML lines longer than 8,192 characters
+are omitted from chunks because generated inline data can overwhelm local
+embedding; original line numbers are preserved. Identical chunk text is
+embedded once per upload, while every chunk gets its own database row.
+The upload commits all rows together after embedding succeeds. Upload only a
+repository you trust; this local learning endpoint has no authentication.
+Day 2–5 text embeddings remain in
+`stored_embeddings`; uploaded code uses separate `repositories` and
+`repository_chunks` tables.
+
+Run the focused tests with:
+
+```powershell
+dotnet test tests/RepoMind.Api.Tests/RepoMind.Api.Tests.csproj
+```
