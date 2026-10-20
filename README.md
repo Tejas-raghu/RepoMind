@@ -176,3 +176,41 @@ Run the focused tests with:
 ```powershell
 dotnet test tests/RepoMind.Api.Tests/RepoMind.Api.Tests.csproj
 ```
+
+## Day 7: Search one indexed repository
+
+On an existing database, apply the idempotent index migration once. The database
+container must be recreated after updating its Compose mounts:
+
+```powershell
+docker compose up -d db
+docker compose exec -T db psql -U repomind -d repomind -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/03-repository-search.sql
+dotnet run --project backend/RepoMind.Api --no-launch-profile --urls http://localhost:5000
+```
+
+In another PowerShell terminal, search a repository ID returned by an upload:
+
+```powershell
+$body = @{ query = 'Where are embeddings stored?'; topK = 5 } | ConvertTo-Json
+Invoke-RestMethod -Uri 'http://localhost:5000/api/repositories/1/search' -Method Post -ContentType 'application/json' -Body $body
+```
+
+The response contains `repositoryId` and ranked `results`. Each result has
+`chunkId`, `filePath`, `startLine`, `endLine`, `content`, and `similarity`;
+vectors are not returned. The query is embedded with the same configured model
+used for upload. PostgreSQL filters by repository ID and model, orders by
+`embedding <=> query_embedding` (cosine distance), and converts distance to
+similarity with `1 - distance`. `topK` must be 1–20 and the query at most 500
+characters. Results below `RepositorySearch:MinimumSimilarity` (0.35 by default)
+are excluded before applying `topK`, so a populated repository can also return
+`results: []` when no chunk clears the cutoff. This value is a provisional
+setting based on a few local queries, not a universal definition of relevance;
+adjust it using labeled examples from your own repositories. An existing empty
+repository returns `results: []` without calling
+Ollama; an unknown ID returns 404. The regular index on `repository_id` helps
+scope searches; this small MVP still uses exact ranking within that repository.
+
+The tests include a PostgreSQL integration test, so start the local database
+before running `dotnet test tests/RepoMind.Api.Tests/RepoMind.Api.Tests.csproj`.
+Set `REPOMIND_TEST_CONNECTION` if the test database uses a different connection
+string.

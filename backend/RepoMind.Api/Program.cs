@@ -31,6 +31,7 @@ builder.Services.AddSingleton(_ =>
 builder.Services.AddScoped<EmbeddingStore>();
 builder.Services.AddSingleton<RepositoryZipReader>();
 builder.Services.AddScoped<RepositoryUploadService>();
+builder.Services.AddScoped<RepositorySearchStore>();
 
 var app = builder.Build();
 
@@ -236,6 +237,55 @@ app.MapPost("/api/repositories/upload", async (
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
         return Results.Problem("Repository upload timed out.", statusCode: 504);
+    }
+});
+
+app.MapPost("/api/repositories/{repositoryId}/search", async (
+    string repositoryId,
+    RepositorySearchRequest request,
+    IEmbeddingService embeddings,
+    RepositorySearchStore store,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var parsedRepositoryId))
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["repositoryId"] = ["Repository ID must be a positive integer."]
+        });
+    var errors = request.Validate(parsedRepositoryId);
+    if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+    try
+    {
+        if (!await store.ExistsAsync(parsedRepositoryId, cancellationToken))
+            return Results.Problem("Repository not found.", statusCode: 404);
+        if (!await store.HasChunksAsync(parsedRepositoryId, cancellationToken))
+            return Results.Ok(new RepositorySearchResponse(parsedRepositoryId, []));
+
+        var query = await embeddings.GenerateAsync(request.Query!.Trim(), cancellationToken);
+        var results = await store.SearchAsync(parsedRepositoryId, query.Model, query.Embedding,
+            request.TopK!.Value, cancellationToken);
+        return Results.Ok(new RepositorySearchResponse(parsedRepositoryId, results));
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Repository search could not reach PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or the Day 6 tables are missing.", statusCode: 503);
+    }
+    catch (HttpRequestException)
+    {
+        logger.LogWarning("Repository search could not reach Ollama.");
+        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+    }
+    catch (JsonException)
+    {
+        logger.LogWarning("Ollama returned an invalid query embedding.");
+        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem("Repository search timed out.", statusCode: 504);
     }
 });
 

@@ -114,6 +114,11 @@ Day 6: Completed.
 Goal:
 Upload a small trusted source ZIP and store line-based code chunks with source references.
 
+Day 7: Completed.
+
+Goal:
+Search indexed code chunks within one repository using a query embedding and pgvector.
+
 ## Important
 
 Implement only the current day's tasks unless explicitly instructed otherwise. Explain AI-related logic so the developer understands the implementation.

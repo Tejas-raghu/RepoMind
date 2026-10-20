@@ -11,6 +11,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./database/006_repository_upload.sql:/docker-entrypoint-initdb.d/02-repository-upload.sql:ro
+      - ./database/007_repository_search.sql:/docker-entrypoint-initdb.d/03-repository-search.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U repomind -d repomind"]
       interval: 5s
