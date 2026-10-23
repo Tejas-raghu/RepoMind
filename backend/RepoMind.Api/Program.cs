@@ -20,6 +20,15 @@ builder.Services.AddHttpClient<IEmbeddingService, EmbeddingService>(client =>
     // Loading a local model on the first request can take longer than later requests.
     client.Timeout = TimeSpan.FromMinutes(2);
 });
+builder.Services.AddHttpClient<ILlmService, OllamaLlmService>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
+        ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
+    var timeoutSeconds = builder.Configuration.GetValue<int>("Ollama:ChatTimeoutSeconds");
+    if (timeoutSeconds <= 0)
+        throw new InvalidOperationException("Ollama:ChatTimeoutSeconds must be positive.");
+    client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+});
 builder.Services.AddSingleton(_ =>
 {
     var connectionString = builder.Configuration.GetConnectionString("RepoMind")
@@ -34,6 +43,38 @@ builder.Services.AddScoped<RepositoryUploadService>();
 builder.Services.AddScoped<RepositorySearchStore>();
 
 var app = builder.Build();
+
+app.MapPost("/api/llm/chat", async (
+    LlmChatRequest request,
+    ILlmService service,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    var errors = request.Validate();
+    if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+    try
+    {
+        return Results.Ok(await service.ChatAsync(request.Prompt!.Trim(), cancellationToken));
+    }
+    catch (HttpRequestException exception)
+    {
+        logger.LogWarning(exception, "Ollama chat request failed.");
+        return Results.Problem("Check that Ollama is running and the configured chat model is installed.",
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem("Ollama chat request timed out.",
+            statusCode: StatusCodes.Status504GatewayTimeout);
+    }
+    catch (JsonException exception)
+    {
+        logger.LogWarning(exception, "Ollama returned an invalid chat response.");
+        return Results.Problem("Ollama returned an invalid chat response.",
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+});
 
 app.MapPost("/api/embeddings", async (
     EmbeddingRequest request,

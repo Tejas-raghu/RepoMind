@@ -23,3 +23,12 @@
 - A temporary empty repository returned `results: []` through HTTP and was then deleted.
 - Added a configurable minimum cosine similarity of 0.35 after a map query returned unrelated chunks from repository 1. The integration test verified that scores below the cutoff are excluded before Top-K and that a stricter configured value changes the results.
 - Live checks with the updated API returned no results for the map query in repository 1 and the authentication query in repository 2, while returning five map chunks in repository 2 and relevant embedding code in repository 1. This cutoff is provisional and needs more labeled queries before treating it as a general relevance rule.
+
+## Week 2, Day 8 — verified
+
+- Added `ILlmService` and a typed-`HttpClient` `OllamaLlmService` for local `POST /api/chat`. Chat uses its own configurable model (`qwen3:4b` by default) and timeout (180 seconds); embedding configuration remains separate.
+- The request sends one user message with `stream=false`, `think=false`, `num_ctx=4096`, `num_predict=200`, and `temperature=0.2`. The service returns Ollama's `prompt_eval_count`, `eval_count`, and `total_duration` (converted from nanoseconds to milliseconds), and rejects incomplete metadata.
+- Added `POST /api/llm/chat` with a required, nonblank prompt of at most 2,000 characters, plus 502 responses for Ollama/response errors and 504 for timeout.
+- `dotnet test tests/RepoMind.Api.Tests/RepoMind.Api.Tests.csproj --no-restore -p:UseAppHost=false` passed all 35 tests, including mocked chat responses and the existing PostgreSQL integration test.
+- Live HTTP check against local Ollama and `qwen3:4b` returned an answer with 18 prompt tokens, 137 generated tokens, and 21,355.4989 ms duration. Blank and 2,001-character prompts returned HTTP 400. The existing embedding endpoint still returned `embeddinggemma` with 768 dimensions.
+- The installed `qwen3:4b` included reasoning text in `message.content` even though the request set `think=false`; the API currently returns the model content as received.
