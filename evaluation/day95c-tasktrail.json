@@ -1,0 +1,16 @@
+{
+  "repository": "TaskTrail (the locally indexed repository previously assigned ID 38)",
+  "notes": "Small manually labeled smoke set. Confirm the indexed ZIP/version and repository ID before using the metrics. Expected paths are relative paths in that repository.",
+  "questions": [
+    { "query": "Where is the Bearer token added to requests?", "expected": "supported", "expectedPath": "src/services/apiClient.ts" },
+    { "query": "How are protected routes secured?", "expected": "supported", "expectedPath": "src/router/guards.ts" },
+    { "query": "Where is JWT validation implemented?", "expected": "supported", "expectedPath": "server/AuthController.cs" },
+    { "query": "Where are Leaflet markers created?", "expected": "supported", "expectedPath": "src/map/outletMarkers.ts" },
+    { "query": "Where is the backend login endpoint?", "expected": "supported", "expectedPath": "server/AuthController.cs" },
+    { "query": "Where is Stripe payment processing implemented?", "expected": "insufficient_evidence" },
+    { "query": "Where is Redis caching configured?", "expected": "insufficient_evidence" },
+    { "query": "Where are GraphQL subscriptions implemented?", "expected": "insufficient_evidence" },
+    { "query": "Where is S3 file upload implemented?", "expected": "insufficient_evidence" },
+    { "query": "Where are email notifications sent?", "expected": "insufficient_evidence" }
+  ]
+}

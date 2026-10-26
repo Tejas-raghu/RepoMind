@@ -29,6 +29,24 @@ builder.Services.AddHttpClient<ILlmService, OllamaLlmService>(client =>
         throw new InvalidOperationException("Ollama:ChatTimeoutSeconds must be positive.");
     client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 });
+builder.Services.AddHttpClient<IRerankingService, OllamaRerankingService>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
+        ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
+    var seconds = builder.Configuration.GetValue<int?>("Reranking:TimeoutSeconds") ?? 120;
+    if (seconds is < 1 or > 180)
+        throw new InvalidOperationException("Reranking:TimeoutSeconds must be between 1 and 180.");
+    client.Timeout = TimeSpan.FromSeconds(seconds);
+});
+builder.Services.AddHttpClient<IEvidenceVerificationService, OllamaEvidenceVerificationService>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
+        ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
+    var seconds = builder.Configuration.GetValue<int?>("EvidenceVerification:TimeoutSeconds") ?? 60;
+    if (seconds is < 1 or > 180)
+        throw new InvalidOperationException("EvidenceVerification:TimeoutSeconds must be between 1 and 180.");
+    client.Timeout = TimeSpan.FromSeconds(seconds);
+});
 builder.Services.AddSingleton(_ =>
 {
     var connectionString = builder.Configuration.GetConnectionString("RepoMind")
@@ -41,6 +59,9 @@ builder.Services.AddScoped<EmbeddingStore>();
 builder.Services.AddSingleton<RepositoryZipReader>();
 builder.Services.AddScoped<RepositoryUploadService>();
 builder.Services.AddScoped<RepositorySearchStore>();
+builder.Services.AddScoped<IRagContextBuilder, RagContextBuilder>();
+builder.Services.AddScoped<HybridSearchService>();
+builder.Services.AddScoped<RagEvidenceVerifier>();
 
 var app = builder.Build();
 
@@ -327,6 +348,138 @@ app.MapPost("/api/repositories/{repositoryId}/search", async (
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
         return Results.Problem("Repository search timed out.", statusCode: 504);
+    }
+});
+
+app.MapPost("/api/repositories/{repositoryId}/rag/context", async (
+    string repositoryId,
+    RagContextRequest request,
+    IRagContextBuilder builder,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var parsedRepositoryId))
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["repositoryId"] = ["Repository ID must be a positive integer."]
+        });
+    var errors = request.Validate(parsedRepositoryId);
+    if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+    try
+    {
+        var response = await builder.BuildAsync(parsedRepositoryId, request.Query!.Trim(),
+            request.TopK!.Value, cancellationToken);
+        return response is null
+            ? Results.Problem("Repository not found.", statusCode: 404)
+            : Results.Ok(response);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("RAG context could not reach PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or the Day 6 tables are missing.", statusCode: 503);
+    }
+    catch (HttpRequestException)
+    {
+        logger.LogWarning("RAG context could not reach Ollama embeddings.");
+        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+    }
+    catch (JsonException)
+    {
+        logger.LogWarning("Ollama returned an invalid query embedding for RAG context.");
+        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem("RAG context request timed out.", statusCode: 504);
+    }
+});
+
+app.MapPost("/api/repositories/{repositoryId}/hybrid/search", async (
+    string repositoryId,
+    HybridSearchRequest request,
+    HybridSearchService search,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var parsedRepositoryId))
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["repositoryId"] = ["Repository ID must be a positive integer."]
+        });
+    var errors = request.Validate(parsedRepositoryId);
+    if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+    try
+    {
+        var response = await search.SearchAsync(parsedRepositoryId, request.Query!.Trim(),
+            request.TopK ?? 5, cancellationToken);
+        return response is null
+            ? Results.Problem("Repository not found.", statusCode: 404)
+            : Results.Ok(response);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Hybrid search could not reach PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or the Day 6 tables are missing.", statusCode: 503);
+    }
+    catch (HttpRequestException)
+    {
+        logger.LogWarning("Hybrid search could not reach Ollama embeddings.");
+        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+    }
+    catch (JsonException)
+    {
+        logger.LogWarning("Ollama returned an invalid hybrid-search embedding.");
+        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem("Hybrid search timed out.", statusCode: 504);
+    }
+});
+
+app.MapPost("/api/repositories/{repositoryId}/rag/verify", async (
+    string repositoryId,
+    EvidenceVerificationRequest request,
+    RagEvidenceVerifier verifier,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var parsedRepositoryId))
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["repositoryId"] = ["Repository ID must be a positive integer."]
+        });
+    var errors = request.Validate(parsedRepositoryId);
+    if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+    try
+    {
+        var response = await verifier.VerifyAsync(parsedRepositoryId, request.Query!.Trim(),
+            request.TopK ?? 5, cancellationToken);
+        return response is null
+            ? Results.Problem("Repository not found.", statusCode: 404)
+            : Results.Ok(response);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Evidence verification could not reach PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or the Day 6 tables are missing.", statusCode: 503);
+    }
+    catch (HttpRequestException)
+    {
+        logger.LogWarning("Evidence verification could not generate a query embedding.");
+        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+    }
+    catch (JsonException)
+    {
+        logger.LogWarning("Ollama returned an invalid query embedding for evidence verification.");
+        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem("Evidence retrieval timed out.", statusCode: 504);
     }
 });
 

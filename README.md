@@ -214,3 +214,129 @@ The tests include a PostgreSQL integration test, so start the local database
 before running `dotnet test tests/RepoMind.Api.Tests/RepoMind.Api.Tests.csproj`.
 Set `REPOMIND_TEST_CONNECTION` if the test database uses a different connection
 string.
+
+## Day 9: Preview repository RAG context
+
+With PostgreSQL, Ollama, and the API running, use an ID returned by repository
+upload:
+
+```powershell
+$body = @{ query = 'Where are embeddings stored?'; topK = 5 } | ConvertTo-Json
+$preview = Invoke-RestMethod -Uri 'http://localhost:5000/api/repositories/1/rag/context' -Method Post -ContentType 'application/json' -Body $body
+$preview | Select-Object repositoryId,query,chunksUsed,contextCharacters,chunksOmittedDueToBudget,insufficientBudget
+$preview.verification | Select-Object status,answerable,reason,verifierDurationMs
+$preview.context
+$preview.sources | Format-Table sourceNumber,filePath,startLine,endLine,similarity
+```
+
+The endpoint uses the repository-scoped hybrid retrieval described below, then
+calls the local verifier before formatting source blocks. It does not generate an answer. `topK`
+must be 1–10; the query must be nonblank and at most 500 characters. An unknown
+repository returns 404. An empty repository returns zero sources.
+With no pre-fusion similarity cutoff, a populated repository can still retrieve
+low-relevance chunks. Only IDs accepted by verification enter the context.
+Check `verification.answerable` and `chunksUsed` before using it for an answer.
+Non-supported or unavailable verification returns no source blocks. The local
+Qwen call can make this endpoint much slower than hybrid search alone.
+The Day 7 search endpoint retains its own cosine cutoff. Hybrid retrieval has
+no cosine cutoff before fusion; `topK` limits the fused list before context
+formatting.
+
+`RagContext:MaxCharacters` defaults to 10,000 and must be at least 1,000.
+This limits the entire preview,
+including the instruction, question, and source blocks. It counts .NET string
+characters as a simple approximation, **not model tokens or an exact token
+budget**. Source blocks are added in final rank order and only when each whole
+block fits. If any verified evidence block does not fit, the endpoint returns
+no source blocks, sets `insufficientBudget`, and marks verification `uncertain`.
+Source paths and line ranges come only from stored chunk metadata. Repository
+code is untrusted data, even when a code comment contains instructions.
+
+## Day 9.5A: Hybrid search preview
+
+The existing `/search` endpoint keeps its semantic-search behavior. The
+`/rag/context` endpoint uses hybrid ranking and verification. The separate
+hybrid endpoint exposes ranks and scores for retrieval inspection:
+
+```powershell
+$body = @{ query = 'Where is the Bearer token added to requests?'; topK = 5 } | ConvertTo-Json
+$result = Invoke-RestMethod -Uri 'http://localhost:5000/api/repositories/38/hybrid/search' -Method Post -ContentType 'application/json' -Body $body
+$result.results | Select-Object filePath,startLine,endLine,vectorRank,lexicalRank,cosineSimilarity,rrfScore | Format-Table
+```
+
+Replace `38` with your uploaded repository ID. `topK` defaults to 5 and accepts
+1–20. `HybridSearch:VectorCandidates` and `HybridSearch:LexicalCandidates`
+default to 15 each. A nonexistent repository returns 404; an empty repository
+returns no results without embedding the query.
+
+The vector list uses the same pgvector cosine ordering as Day 7 but has **no
+similarity cutoff before fusion**. The lexical list searches chunk content and
+relative paths with PostgreSQL's `simple` full-text configuration, plus
+case-insensitive literal term matching for code terms such as `Authorization`,
+`Bearer`, `JWT`, and `CS0234`. It puts matching source-code files before docs
+within that list. Both SQL queries restrict `repository_id` and embedding model.
+No new database, model, or migration is needed for this small repository scan.
+
+Reciprocal Rank Fusion (RRF) adds `1 / (60 + rank)` from each list containing a
+chunk, using ranks starting at 1. This combines ranks rather than cosine and
+text-search scores, which have different scales. Matching chunk IDs are merged
+once; ties use vector rank, lexical rank, then chunk ID. The response retains
+stored source content and line metadata and includes `vectorRank`, `lexicalRank`,
+`cosineSimilarity`, and `rrfScore` for inspection. A missing rank means that
+chunk was absent from that candidate list. These diagnostics do not log source
+content. This first version scans a small repository for lexical matches and
+uses simple English-oriented query term extraction; larger or multilingual
+repositories will need evaluation and indexing work.
+
+## Day 9.5C: Verify source evidence
+
+`POST /api/repositories/{repositoryId}/rag/verify` accepts a nonblank query of
+at most 500 characters and `topK` from 1 to 5 (default 5). It uses the same
+repository-scoped hybrid search and optional reranker as `/rag/context`. It
+does not generate an answer. The response has `status` (`supported`,
+`insufficient_evidence`, `uncertain`, or `verification_unavailable`),
+`answerable`, validated `evidenceChunkIds`, trusted `sources` (database chunk
+ID, path, and lines), a short safe `reason`, `rerankingStatus`, and
+`verifierDurationMs`. Source contents are never copied from the model output.
+
+The verifier sends up to five complete final-ranked chunks to the configured
+local Qwen model with a JSON Schema. `EvidenceVerification:MaxCharacters`
+(default 8,000) bounds the question and complete chunk data; it never silently
+cuts code while retaining an inaccurate line range. If the budget omits chunks,
+an `insufficient_evidence` model decision becomes `uncertain`. If no chunk fits,
+the endpoint returns `uncertain` without calling Qwen. Empty repositories return
+`insufficient_evidence` without calling Qwen. Model timeout, unavailable model,
+or invalid output returns `verification_unavailable` and `answerable: false`.
+`EvidenceVerification:TimeoutSeconds` defaults to 60.
+
+```powershell
+$body = @{ query = 'Where is the Bearer token added to requests?'; topK = 3 } | ConvertTo-Json
+$result = Invoke-RestMethod -Uri 'http://localhost:5000/api/repositories/38/rag/verify' -Method Post -ContentType 'application/json' -Body $body
+$result | Select-Object status,answerable,reason,verifierDurationMs,rerankingStatus
+$result.sources | Format-Table chunkId,filePath,startLine,endLine
+```
+
+Replace `38` with your uploaded repository ID. The fixed TaskTrail smoke set
+and measurement script are in `evaluation/day95c-tasktrail.json` and
+`evaluation/day95c-evaluate.ps1`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File evaluation/day95c-evaluate.ps1 -RepositoryId 38 -TopK 3
+```
+
+The script prints per-query outcomes, supported acceptance, unsupported false
+acceptance, uncertain/unavailable counts, and average verifier duration. This
+small set is a learning aid, not a reliability claim.
+
+### One RAG question flow
+
+`/rag/context` runs one repository-scoped hybrid search (vector plus lexical
+candidates, RRF, and local reranking), verifies up to five final-ranked
+chunks, and formats only validated evidence. `/rag/verify` returns the same
+verification decision without context formatting. `/hybrid/search` remains a
+retrieval diagnostic. No endpoint generates a final answer yet. For an empty
+repository, the verifier is skipped. When verification is uncertain,
+insufficient, or unavailable, the context contains no source blocks.
+`Reranking:Enabled` is true in `appsettings.json`; set it to false to skip that
+local model call while keeping RRF and verification. Both model calls add
+latency. Check `rerankingStatus` and `verification.status` in the response.
