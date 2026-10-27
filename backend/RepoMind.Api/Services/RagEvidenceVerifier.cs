@@ -7,7 +7,14 @@ namespace RepoMind.Api.Services;
 public sealed record VerifiedRetrieval(HybridSearchResponse Search,
     EvidenceVerificationResponse Verification);
 
+public interface IRagEvidenceVerifier
+{
+    Task<VerifiedRetrieval?> PrepareAsync(long repositoryId, string query, int topK,
+        CancellationToken cancellationToken);
+}
+
 public sealed class RagEvidenceVerifier(HybridSearchService search, IEvidenceVerificationService verifier)
+    : IRagEvidenceVerifier
 {
     public async Task<EvidenceVerificationResponse?> VerifyAsync(long repositoryId, string query,
         int topK, CancellationToken cancellationToken)

@@ -10,6 +10,10 @@ public sealed class RagContextBuilder(
     public const int DefaultMaxCharacters = 10_000;
     private readonly int maxCharacters = GetMaxCharacters(configuration);
 
+    public RagContextResponse BuildVerified(long repositoryId, string query,
+        IReadOnlyList<RepositorySearchResult> verifiedChunks) =>
+        Format(repositoryId, query, verifiedChunks, maxCharacters);
+
     public async Task<RagContextResponse?> BuildAsync(long repositoryId, string query, int topK,
         CancellationToken cancellationToken)
     {
@@ -66,7 +70,7 @@ public sealed class RagContextBuilder(
             var result = results[i];
             var number = i + 1;
             var block = $"\n----- SOURCE {number} -----\n" +
-                $"Path: {result.FilePath}\nLines: {result.StartLine}-{result.EndLine}\n" +
+                $"Chunk ID: {result.ChunkId}\nPath: {result.FilePath}\nLines: {result.StartLine}-{result.EndLine}\n" +
                 $"Code:\n{result.Content}\n----- END SOURCE {number} -----\n";
             if (context.Length + block.Length > maxCharacters)
             {

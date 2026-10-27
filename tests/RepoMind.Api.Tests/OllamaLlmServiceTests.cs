@@ -9,6 +9,40 @@ namespace RepoMind.Api.Tests;
 public sealed class OllamaLlmServiceTests
 {
     [Fact]
+    public async Task Grounded_generation_sends_separate_sections_and_returns_nullable_usage()
+    {
+        var handler = new StubHandler(HttpStatusCode.OK,
+            """{"message":{"content":"{\"answer\":\"Bearer is set [source:42].\",\"sourceIds\":[42]}"},"done":true}""");
+        var result = await CreateService(handler).GenerateGroundedAsync("Bearer?",
+            "Chunk ID: 42\nPath: src/apiClient.ts", [42], CancellationToken.None);
+        Assert.Equal("Bearer is set [source:42].", result.Answer);
+        Assert.Equal([42L], result.SourceIds);
+        Assert.Null(result.PromptTokens);
+        Assert.Null(result.GeneratedTokens);
+        using var request = JsonDocument.Parse(handler.Body!);
+        var root = request.RootElement;
+        Assert.False(root.GetProperty("stream").GetBoolean());
+        Assert.Equal(0, root.GetProperty("options").GetProperty("temperature").GetDouble());
+        Assert.Equal("system", root.GetProperty("messages")[0].GetProperty("role").GetString());
+        Assert.Contains("untrusted data", root.GetProperty("messages")[0].GetProperty("content").GetString());
+        Assert.Contains("Question:\nBearer?\n\nVerified source context:\nChunk ID: 42",
+            root.GetProperty("messages")[1].GetProperty("content").GetString());
+        Assert.Equal(42, root.GetProperty("format").GetProperty("properties")
+            .GetProperty("sourceIds").GetProperty("items").GetProperty("enum")[0].GetInt64());
+    }
+
+    [Theory]
+    [InlineData("""{"message":{"content":"not json"},"done":true}""")]
+    [InlineData("""{"message":{"content":"{\"answer\":\"ok\",\"sourceIds\":[\"42\"]}"},"done":true}""")]
+    [InlineData("[]")]
+    public async Task Grounded_generation_rejects_malformed_output(string body)
+    {
+        var handler = new StubHandler(HttpStatusCode.OK, body);
+        await Assert.ThrowsAnyAsync<JsonException>(() => CreateService(handler)
+            .GenerateGroundedAsync("Bearer?", "source", [42], CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Sends_chat_settings_and_returns_actual_metadata()
     {
         var handler = new StubHandler(HttpStatusCode.OK,

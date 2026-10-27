@@ -119,6 +119,23 @@ Day 7: Completed.
 Goal:
 Search indexed code chunks within one repository using a query embedding and pgvector.
 
+Day 8: Completed.
+
+Goal:
+Call a local Ollama chat model (`qwen3:4b`) through the API.
+
+Day 9 / 9.5: Completed.
+
+Goal:
+Build RAG context from repository-scoped hybrid retrieval (vector + lexical, RRF), optional LLM reranking, and evidence verification with abstention.
+
+Day 10: Completed.
+
+Goal:
+Generate grounded RAG answers with validated source citations via `POST /api/repositories/{repositoryId}/rag/answer`, without calling the generation model when evidence is not supported.
+
+Known limitation: with reranking enabled, local latency makes verification time out; successful live answers were measured with reranking disabled.
+
 ## Important
 
 Implement only the current day's tasks unless explicitly instructed otherwise. Explain AI-related logic so the developer understands the implementation.

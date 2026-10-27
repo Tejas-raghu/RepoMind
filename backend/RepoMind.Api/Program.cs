@@ -62,6 +62,8 @@ builder.Services.AddScoped<RepositorySearchStore>();
 builder.Services.AddScoped<IRagContextBuilder, RagContextBuilder>();
 builder.Services.AddScoped<HybridSearchService>();
 builder.Services.AddScoped<RagEvidenceVerifier>();
+builder.Services.AddScoped<IRagEvidenceVerifier>(provider => provider.GetRequiredService<RagEvidenceVerifier>());
+builder.Services.AddScoped<IRagAnswerService, RagAnswerService>();
 
 var app = builder.Build();
 
@@ -480,6 +482,50 @@ app.MapPost("/api/repositories/{repositoryId}/rag/verify", async (
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
         return Results.Problem("Evidence retrieval timed out.", statusCode: 504);
+    }
+});
+
+app.MapPost("/api/repositories/{repositoryId}/rag/answer", async (
+    string repositoryId,
+    RagAnswerRequest request,
+    IRagAnswerService answerService,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var parsedRepositoryId))
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["repositoryId"] = ["Repository ID must be a positive integer."]
+        });
+    var errors = request.Validate(parsedRepositoryId);
+    if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+    try
+    {
+        var response = await answerService.AnswerAsync(parsedRepositoryId, request.Query!.Trim(),
+            request.TopK ?? 5, cancellationToken);
+        return response is null
+            ? Results.Problem("Repository not found.", statusCode: 404)
+            : Results.Ok(response);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("RAG answer could not reach PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or the Day 6 tables are missing.", statusCode: 503);
+    }
+    catch (HttpRequestException)
+    {
+        logger.LogWarning("RAG answer could not generate a query embedding.");
+        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+    }
+    catch (JsonException)
+    {
+        logger.LogWarning("Ollama returned an invalid query embedding for RAG answer.");
+        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem("RAG answer retrieval timed out.", statusCode: 504);
     }
 });
 
