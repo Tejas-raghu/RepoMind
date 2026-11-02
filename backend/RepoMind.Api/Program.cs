@@ -64,6 +64,7 @@ builder.Services.AddScoped<HybridSearchService>();
 builder.Services.AddScoped<RagEvidenceVerifier>();
 builder.Services.AddScoped<IRagEvidenceVerifier>(provider => provider.GetRequiredService<RagEvidenceVerifier>());
 builder.Services.AddScoped<IRagAnswerService, RagAnswerService>();
+builder.Services.AddSingleton<RagGenerationPromptBuilder>();
 
 var app = builder.Build();
 

@@ -1,0 +1,9 @@
+[
+  { "query": "Where is the Bearer token added to requests?", "expectedPath": "src/services/apiClient.ts", "topK": 1 },
+  { "query": "How are protected routes secured?", "expectedPath": "src/router/guards.ts", "topK": 1 },
+  { "query": "Where is backend login implemented?", "expectedPath": "server/AuthController.cs", "topK": 3 },
+  { "query": "Where are Leaflet markers created?", "expectedPath": "src/map/outletMarkers.ts", "topK": 3 },
+  { "query": "How are overdue tasks identified?", "expectedPath": "src/services/taskService.ts", "topK": 3 },
+  { "query": "Where is Stripe payment processing implemented?", "expectedPath": null, "topK": 1 },
+  { "query": "Where is Redis caching configured?", "expectedPath": null, "topK": 3 }
+]

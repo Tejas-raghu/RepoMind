@@ -5,7 +5,7 @@ using RepoMind.Api.Contracts;
 
 namespace RepoMind.Api.Services;
 
-public sealed class RagAnswerService(IRagEvidenceVerifier verifier, IRagContextBuilder contextBuilder,
+public sealed class RagAnswerService(IRagEvidenceVerifier verifier, RagGenerationPromptBuilder promptBuilder,
     ILlmService llm, IConfiguration configuration, IHostEnvironment environment,
     ILogger<RagAnswerService> logger) : IRagAnswerService
 {
@@ -42,17 +42,19 @@ public sealed class RagAnswerService(IRagEvidenceVerifier verifier, IRagContextB
 
         var chunks = evidenceIds.Select(id => retrieved[id]).Select(x => new RepositorySearchResult(
             x.ChunkId, x.FilePath, x.StartLine, x.EndLine, x.Content, x.CosineSimilarity)).ToArray();
-        var context = contextBuilder.BuildVerified(repositoryId, query, chunks);
-        if (context.ChunksOmittedDueToBudget || context.Sources.Count != chunks.Length ||
-            context.Sources.Select(x => x.ChunkId).Except(evidenceIds).Any())
-            return Failure("insufficient_context", "Verified evidence could not fit the answer context.");
+        var prompt = promptBuilder.Build(query, chunks);
+        if (prompt.IncludedChunkIds.Count == 0)
+            return Failure("insufficient_context", "No complete verified evidence fits the answer context.");
+        if (prompt.OmittedChunks > 0)
+            logger.LogInformation("RAG answer omitted {OmittedCount} verified chunks for repository {RepositoryId}",
+                prompt.OmittedChunks, repositoryId);
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         GroundedGenerationResult generated;
         try
         {
-            generated = await llm.GenerateGroundedAsync(query, context.Context, evidenceIds, timeout.Token);
+            generated = await llm.GenerateGroundedAsync(prompt, timeout.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -64,29 +66,50 @@ public sealed class RagAnswerService(IRagEvidenceVerifier verifier, IRagContextB
             return Failure("generation_unavailable", "The local answer model returned no usable answer.");
         }
 
-        var allowed = context.Sources.Select(x => x.ChunkId).ToHashSet();
-        var cited = Regex.Matches(generated.Answer ?? "", @"\[source:(\d+)\]")
-            .Select(match => long.TryParse(match.Groups[1].Value, out var id) ? id : -1)
-            .ToHashSet();
-        var allMarkers = Regex.Matches(generated.Answer ?? "", @"\[source:[^\]]*\]").Count;
-        if (string.IsNullOrWhiteSpace(generated.Answer) || generated.SourceIds.Count == 0 ||
+        logger.LogInformation("RAG prompt estimate {EstimatedTokens}, actual {ActualTokens}, output {OutputTokens}, omitted chunks {OmittedCount}",
+            prompt.EstimatedInputTokens, generated.PromptTokens, generated.GeneratedTokens,
+            prompt.OmittedChunks);
+        if (generated.PromptTokens is { } actual &&
+            actual + prompt.Options.MaxOutputTokens + prompt.Options.ReservedTokens >
+            prompt.Options.ContextWindowTokens)
+            return Failure("generation_unavailable", "The answer prompt exceeded the configured model context.");
+
+        if (Regex.IsMatch(generated.Summary, @"\b(cannot answer|cannot determine|insufficient evidence|not enough evidence|no relevant source)\b",
+            RegexOptions.IgnoreCase))
+            return Failure("insufficient_evidence", "The supplied evidence does not support an answer.");
+
+        var allowed = prompt.IncludedChunkIds.ToHashSet();
+        var prose = generated.Summary + " " + generated.Explanation;
+        var markers = Regex.Matches(prose, @"\[source:([^\]]*)\]");
+        var markerIds = new HashSet<long>();
+        var validMarkers = true;
+        foreach (Match marker in markers)
+        {
+            if (!long.TryParse(marker.Groups[1].Value, out var markerId) ||
+                !allowed.Contains(markerId)) validMarkers = false;
+            else markerIds.Add(markerId);
+        }
+        if (string.IsNullOrWhiteSpace(generated.Summary) || generated.SourceIds.Count == 0 ||
             generated.SourceIds.Distinct().Count() != generated.SourceIds.Count ||
             generated.SourceIds.Any(id => !allowed.Contains(id)) ||
-            (cited.Count > 0 && !cited.SetEquals(generated.SourceIds)) ||
-            !cited.IsSubsetOf(allowed) || allMarkers != cited.Count)
+            generated.Summary.Length > 600 || generated.Explanation.Length > 2400 ||
+            !validMarkers || (markers.Count > 0 && !markerIds.SetEquals(generated.SourceIds)))
         {
-            if (environment.IsDevelopment())
-                logger.LogInformation("RAG generation rejected: allowed IDs {Allowed}, listed IDs {Listed}, inline IDs {Inline}",
-                    string.Join(',', allowed), string.Join(',', generated.SourceIds), string.Join(',', cited));
+            logger.LogWarning("RAG generation rejected: summary chars {SummaryLength}, explanation chars {ExplanationLength}, " +
+                "listed IDs {Listed}, marker IDs {Markers}, valid markers {ValidMarkers}, allowed IDs {Allowed}",
+                generated.Summary.Length, generated.Explanation.Length,
+                string.Join(',', generated.SourceIds), string.Join(',', markerIds), validMarkers,
+                string.Join(',', allowed));
             return Failure("generation_unavailable", "The answer contained invalid source references.");
         }
 
-        // Structured IDs are the authority. If the model omitted inline markers, add only
-        // the validated IDs; never infer a source from free-form answer text.
-        var answer = cited.Count == 0
-            ? generated.Answer.TrimEnd() + " " + string.Join(' ', generated.SourceIds.Select(id => $"[source:{id}]"))
-            : generated.Answer;
-        cited = generated.SourceIds.ToHashSet();
+        // Citations are rendered from validated IDs, never from model-written markers.
+        var summary = Regex.Replace(generated.Summary, @"\s*\[source:[^\]]*\]", "").Trim();
+        var explanation = Regex.Replace(generated.Explanation, @"\s*\[source:[^\]]*\]", "").Trim();
+        var answer = summary +
+            (string.IsNullOrWhiteSpace(explanation) ? "" : " " + explanation) +
+            " " + string.Join(' ', generated.SourceIds.Select(id => $"[source:{id}]"));
+        var cited = generated.SourceIds.ToHashSet();
 
         var sources = chunks.Where(x => cited.Contains(x.ChunkId))
             .Select(x => new RagAnswerSource(x.ChunkId, x.FilePath, x.StartLine, x.EndLine, x.Content))
@@ -100,7 +123,9 @@ public sealed class RagAnswerService(IRagEvidenceVerifier verifier, IRagContextB
         {
             DurationMs = elapsed.Elapsed.TotalMilliseconds,
             VerifierDurationMs = decision.VerifierDurationMs,
-            RerankingStatus = prepared.Search.RerankingStatus
+            RerankingStatus = prepared.Search.RerankingStatus,
+            Summary = summary,
+            Explanation = explanation
         };
     }
 

@@ -16,7 +16,10 @@ public sealed record RagAnswerResponse(string Status, string Answer,
     public double? DurationMs { get; init; }
     public double? VerifierDurationMs { get; init; }
     public string? RerankingStatus { get; init; }
+    public string? Summary { get; init; }
+    public string? Explanation { get; init; }
 }
 
-public sealed record GroundedGenerationResult(string Answer, IReadOnlyList<long> SourceIds,
+public sealed record GroundedGenerationResult(string Summary, string Explanation,
+    IReadOnlyList<long> SourceIds,
     string Model, int? PromptTokens, int? GeneratedTokens, double? DurationMs);

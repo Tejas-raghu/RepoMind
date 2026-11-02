@@ -12,34 +12,40 @@ public sealed class OllamaLlmServiceTests
     public async Task Grounded_generation_sends_separate_sections_and_returns_nullable_usage()
     {
         var handler = new StubHandler(HttpStatusCode.OK,
-            """{"message":{"content":"{\"answer\":\"Bearer is set [source:42].\",\"sourceIds\":[42]}"},"done":true}""");
-        var result = await CreateService(handler).GenerateGroundedAsync("Bearer?",
-            "Chunk ID: 42\nPath: src/apiClient.ts", [42], CancellationToken.None);
-        Assert.Equal("Bearer is set [source:42].", result.Answer);
+            """{"message":{"content":"{\"summary\":\"Bearer is set.\",\"explanation\":\"The client adds it.\",\"citationChunkIds\":[42]}"},"done":true,"prompt_eval_count":75,"eval_count":20}""");
+        var prompt = new RagGenerationPromptBuilder(new ConfigurationBuilder().Build()).Build("Bearer?",
+            [new RepoMind.Api.Contracts.RepositorySearchResult(42, "src/apiClient.ts", 1, 2, "headers.set('Authorization', token);", 0.8)]);
+        var result = await CreateService(handler).GenerateGroundedAsync(prompt, CancellationToken.None);
+        Assert.Equal("Bearer is set.", result.Summary);
         Assert.Equal([42L], result.SourceIds);
-        Assert.Null(result.PromptTokens);
-        Assert.Null(result.GeneratedTokens);
+        Assert.Equal(75, result.PromptTokens);
+        Assert.Equal(20, result.GeneratedTokens);
+        Assert.True(prompt.EstimatedInputTokens >= result.PromptTokens);
         using var request = JsonDocument.Parse(handler.Body!);
         var root = request.RootElement;
         Assert.False(root.GetProperty("stream").GetBoolean());
         Assert.Equal(0, root.GetProperty("options").GetProperty("temperature").GetDouble());
         Assert.Equal("system", root.GetProperty("messages")[0].GetProperty("role").GetString());
         Assert.Contains("untrusted data", root.GetProperty("messages")[0].GetProperty("content").GetString());
-        Assert.Contains("Question:\nBearer?\n\nVerified source context:\nChunk ID: 42",
-            root.GetProperty("messages")[1].GetProperty("content").GetString());
+        Assert.Contains("Question:\nBearer?", root.GetProperty("messages")[1].GetProperty("content").GetString());
+        Assert.Contains("src/apiClient.ts", root.GetProperty("messages")[1].GetProperty("content").GetString());
         Assert.Equal(42, root.GetProperty("format").GetProperty("properties")
-            .GetProperty("sourceIds").GetProperty("items").GetProperty("enum")[0].GetInt64());
+            .GetProperty("citationChunkIds").GetProperty("items").GetProperty("enum")[0].GetInt64());
     }
 
     [Theory]
     [InlineData("""{"message":{"content":"not json"},"done":true}""")]
-    [InlineData("""{"message":{"content":"{\"answer\":\"ok\",\"sourceIds\":[\"42\"]}"},"done":true}""")]
+    [InlineData("""{"message":{"content":"{\"summary\":\"ok\",\"explanation\":\"x\",\"citationChunkIds\":[\"42\"]}"},"done":true}""")]
+    [InlineData("""{"message":{"content":"{\"summary\":\"ok\",\"explanation\":\"x\",\"citationChunkIds\":[99]}"},"done":true}""")]
+    [InlineData("""{"message":{"content":"{\"summary\":\"ok\",\"explanation\":\"x\",\"citationChunkIds\":[42,42]}"},"done":true}""")]
     [InlineData("[]")]
     public async Task Grounded_generation_rejects_malformed_output(string body)
     {
         var handler = new StubHandler(HttpStatusCode.OK, body);
+        var prompt = new RagGenerationPromptBuilder(new ConfigurationBuilder().Build()).Build("Bearer?",
+            [new RepoMind.Api.Contracts.RepositorySearchResult(42, "source.cs", 1, 1, "source", 0.8)]);
         await Assert.ThrowsAnyAsync<JsonException>(() => CreateService(handler)
-            .GenerateGroundedAsync("Bearer?", "source", [42], CancellationToken.None));
+            .GenerateGroundedAsync(prompt, CancellationToken.None));
     }
 
     [Fact]
