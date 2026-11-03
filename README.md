@@ -1,5 +1,90 @@
 # RepoMind
 
+## Day 13: Indexed code explorer
+
+Select a repository to load its indexed file tree. Opening a file requests only that
+file's stored source chunks. Expand an answer's source card and choose **Open in
+explorer** to open the trusted file path and highlight its cited line range. The
+viewer labels gaps and conflicting overlaps, preserves stored line numbers, and
+copies visible coverage markers with code when lines are unavailable.
+
+The API provides:
+
+- `GET /api/repositories/{repositoryId}/files`: distinct indexed `{ path }` entries.
+- `GET /api/repositories/{repositoryId}/files/content?path=...`: `lines` with original
+  line numbers and `covered`, `gap`, or `conflict` status, plus coverage ranges.
+  `complete` is always `false` and `fidelity` is `indexed_coverage` because original
+  whole files were not stored. Oversized views return 413.
+
+No ZIP or server filesystem is read by these endpoints. Overlapping stored chunks
+are deduplicated only when their line text matches. Mid-line split fragments are
+omitted from the file view unless another complete chunk covers those lines. The
+exact stored citation snippet remains available in its answer card.
+
+Run the API and frontend using the Day 12 commands below. Then select an indexed
+repository, open nested folders and files, and try an answer citation. Run
+`npm test` and `npm run build` in `frontend/`, plus `dotnet test
+tests/RepoMind.Api.Tests/RepoMind.Api.Tests.csproj --no-restore` from the root.
+
+## Day 12: Local dashboard
+
+The Vue 3 frontend lives in `frontend/`. It uses the Composition API, native `fetch`,
+and the real upload, repository list, and grounded answer endpoints. `App.vue`
+owns the active repository and request controllers. `RepositoryPanel.vue` composes
+`RepositorySelector.vue` and `RepositoryUpload.vue`; `AnswerPanel.vue` composes
+`QuestionPanel.vue` and `SourceCodeCard.vue`. `services/repomindApi.ts` owns all
+HTTP calls and validates response shapes before the UI displays them. Types live
+in `types/api.ts`. Repository code is rendered as escaped text in an expandable,
+scrollable card with a copy-code action.
+
+Start PostgreSQL and Ollama, then run the API from the repository root:
+
+```powershell
+docker compose up -d db
+$env:Reranking__Enabled = 'false' # optional for a faster local smoke test
+dotnet run --project backend/RepoMind.Api --no-launch-profile --urls http://localhost:5000
+```
+
+In another terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173/`. Vite proxies `/api` to
+`http://localhost:5000` during development. Copy `frontend/.env.example` to
+`frontend/.env.local` to override `VITE_API_BASE_URL` (default `/api`) or
+`VITE_API_PROXY_TARGET` (default `http://localhost:5000`). The browser sends no
+API keys. A separately hosted frontend needs an API URL and matching CORS
+configuration; the local development setup uses the proxy.
+
+Run `npm test` in `frontend/` for API response validation checks, and
+`npm run build` for TypeScript checking and a production bundle.
+
+The dashboard uses `GET /api/repositories` for stored `{ id, name }` records,
+`POST /api/repositories/upload` with one multipart field named `file`, and
+`POST /api/repositories/{id}/rag/answer` with JSON `{ query, topK: 3 }`. The
+answer response supplies `status`, `answer`, and trusted `sources` with chunk ID,
+file path, line range, and original content. The UI shows the returned status,
+including abstentions and generation failures, without fabricating sources.
+
+For a manual check, upload a small source ZIP and confirm that its new repository
+is selected. Select an indexed TaskTrail repository and ask “Where is the Bearer
+token added to requests?”; an answered result should include a source file and
+expandable code. Ask “Where is Stripe payment processing implemented?” to check
+the no-evidence state. Try a non-ZIP file, stop the API and refresh, and cancel a
+slow question to check error and loading behavior. The answer form accepts at
+most 500 characters and supports Ctrl+Enter.
+
+Also ask "How are protected routes secured?" on the indexed TaskTrail repository.
+Switch repositories during a slow question to confirm the older answer cannot
+appear, and try a source containing HTML to confirm it displays as text. Check
+desktop and narrow viewport widths, keyboard focus, and the copy-code action.
+The local model can be slow or return `generation_unavailable`; that is shown as
+a failure state, with no fabricated answer or sources.
+
 Day 2: a local ASP.NET Core API that generates text embeddings using Ollama.
 Day 3: a local PostgreSQL database with pgvector enabled.
 Day 4: save text and its Ollama embedding in PostgreSQL.

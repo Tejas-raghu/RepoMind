@@ -58,6 +58,8 @@ builder.Services.AddSingleton(_ =>
 builder.Services.AddScoped<EmbeddingStore>();
 builder.Services.AddSingleton<RepositoryZipReader>();
 builder.Services.AddScoped<RepositoryUploadService>();
+builder.Services.AddScoped<RepositoryCatalog>();
+builder.Services.AddScoped<RepositorySourceService>();
 builder.Services.AddScoped<RepositorySearchStore>();
 builder.Services.AddScoped<IRagContextBuilder, RagContextBuilder>();
 builder.Services.AddScoped<HybridSearchService>();
@@ -225,6 +227,71 @@ app.MapPost("/api/embeddings/search", async (
         logger.LogWarning(exception, "Ollama returned an invalid response.");
         return Results.Problem("Ollama returned an invalid embedding response.",
             statusCode: StatusCodes.Status502BadGateway);
+    }
+});
+
+app.MapGet("/api/repositories", async (
+    RepositoryCatalog catalog,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await catalog.ListAsync(cancellationToken));
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Repository list could not reach PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or the Day 6 migration is missing.", statusCode: 503);
+    }
+});
+
+app.MapGet("/api/repositories/{repositoryId}/files", async (
+    string repositoryId, RepositorySourceService sources, ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var id) || id <= 0)
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        { ["repositoryId"] = ["Repository ID must be a positive integer."] });
+    try
+    {
+        return await sources.ExistsAsync(id, cancellationToken)
+            ? Results.Ok(await sources.ListAsync(id, cancellationToken))
+            : Results.Problem("Repository not found.", statusCode: 404);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Repository file list could not reach PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable.", statusCode: 503);
+    }
+});
+
+app.MapGet("/api/repositories/{repositoryId}/files/content", async (
+    string repositoryId, string? path, RepositorySourceService sources, ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var id) || id <= 0 || !RepositorySourceService.ValidPath(path))
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        { ["path"] = ["Provide a positive repository ID and a valid indexed file path."] });
+    try
+    {
+        if (!await sources.ExistsAsync(id, cancellationToken))
+            return Results.Problem("Repository not found.", statusCode: 404);
+        var content = await sources.GetContentAsync(id, path!, cancellationToken);
+        return content is null ? Results.Problem("Indexed file not found.", statusCode: 404) : Results.Ok(content);
+    }
+    catch (SourceTooLargeException)
+    {
+        return Results.Problem("Indexed file exceeds the viewer limit.", statusCode: 413);
+    }
+    catch (InvalidDataException)
+    {
+        return Results.Problem("Stored source metadata is invalid.", statusCode: 409);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Indexed file could not be loaded from PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable.", statusCode: 503);
     }
 });
 

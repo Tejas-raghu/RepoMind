@@ -2,3 +2,7 @@
 **/obj/
 .vs/
 .idea/
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+.local-service-logs/
