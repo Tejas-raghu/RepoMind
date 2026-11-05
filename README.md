@@ -1,5 +1,58 @@
 # RepoMind
 
+## Day 14: Basic RAG evaluation
+
+The local evaluator uses the indexed TaskTrail sample at repository ID 38. Its
+`evaluation/day14-tasktrail.json` fixture pins 12 indexed paths and five exact
+implementation anchors, and checks that five unsupported feature terms are absent
+from indexed coverage. If that repository ID or content changes, the evaluator
+stops before scoring. The labels do not prove that skipped ZIP files lacked those
+features.
+
+Start PostgreSQL, Ollama, and the API as below. For results comparable to the
+checked-in run, start the API with `Reranking__Enabled=false`. Then from the
+repository root:
+
+```powershell
+dotnet run --project evaluation/RepoMind.Evaluation/RepoMind.Evaluation.csproj -- --base-url http://127.0.0.1:5000 --report evaluation/day14-report.md
+```
+
+The tool requests five ranked chunks from `/hybrid/search` for each supported
+question. Hit@1 means the first chunk has the exact labeled path, contains the
+specified anchor line, and includes its code text. Hit@5 means any of the first
+five chunks does. For example, a correct chunk at rank 2 counts for Hit@5 but not
+Hit@1. Each score uses five supported questions as its denominator.
+
+It also calls `/rag/answer` with `topK: 3`, matching the Vue UI. An unsupported
+question is a correct abstention only when the status is `insufficient_evidence`
+and there are no sources. An `answered` status is a false acceptance. Stopwatch
+measures each request's wall time; the report averages all attempted answer calls
+and separately reports retrieval time. HTTP 200 by itself never counts as a hit.
+The generated [Day 14 report](evaluation/day14-report.md) contains the measured
+outcomes and limitations.
+
+### Hit@1 follow-up
+
+For implementation questions, hybrid retrieval now orders code candidates before
+documentation after RRF, with small signals for a matching function declaration,
+the top lexical code match, and an explicit backend/frontend scope. The RRF score
+remains in the API response. An explicit README or documentation question retains
+the original RRF order. This is a provisional ranking rule for the small local
+sample, not a general relevance guarantee.
+
+Run the five labeled retrieval checks without waiting for RAG generation:
+
+```powershell
+.\evaluation\day14-hit1.ps1 -BaseUrl http://127.0.0.1:5000 -ReportPath evaluation/day14-hit1-report.md
+```
+
+The script verifies the indexed paths and source anchors before scoring. On the
+TaskTrail sample with reranking disabled, the measured Hit@1 changed from 2/5 to
+5/5 while Hit@5 stayed 5/5. Three additional implementation paraphrases also
+returned the expected file first. Restart the API after changing backend code;
+the running process does not reload the new ranking automatically. The evidence
+verifier still abstained on the protected-routes question in one live check.
+
 ## Day 13: Indexed code explorer
 
 Select a repository to load its indexed file tree. Opening a file requests only that

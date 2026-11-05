@@ -14,6 +14,12 @@ public sealed class HybridSearchService(
         "of", "on", "the", "to", "what", "where", "which", "with"
     };
 
+    private static readonly HashSet<string> QuestionWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "added", "attach", "attaches", "code", "created", "decides", "defined",
+        "function", "identified", "implemented", "method", "secured", "uses"
+    };
+
     private readonly int vectorCandidates = CandidateCount(configuration, "HybridSearch:VectorCandidates");
     private readonly int lexicalCandidates = CandidateCount(configuration, "HybridSearch:LexicalCandidates");
     private readonly bool rerankingEnabled = configuration.GetValue<bool>("Reranking:Enabled");
@@ -33,18 +39,20 @@ public sealed class HybridSearchService(
             embedding.Embedding, ExtractTerms(query), lexicalCandidates, cancellationToken);
         // Fuse and deduplicate before asking the LLM to reorder candidates.
         var fused = Fuse(vector, lexical, Math.Max(topK, rerankingCandidates));
-        if (!rerankingEnabled || fused.Count == 0)
-            return new HybridSearchResponse(repositoryId, query, fused.Take(topK).ToArray())
+        var prioritized = PrioritizeImplementation(query, fused);
+        if (!rerankingEnabled || prioritized.Count == 0)
+            return new HybridSearchResponse(repositoryId, query, prioritized.Take(topK).ToArray())
             { RerankingStatus = rerankingEnabled ? "no_results" : "disabled" };
 
-        var candidates = fused.Take(rerankingCandidates).ToArray();
+        var candidates = prioritized.Take(rerankingCandidates).ToArray();
         try
         {
             var scores = await reranker.ScoreAsync(query, candidates, cancellationToken);
-            var ordered = Rerank(fused, scores, candidates.Length, topK);
+            var ordered = Rerank(prioritized, scores, candidates.Length, topK);
             if (environment.IsDevelopment())
-                logger.LogInformation("Reranking rank comparison for repository {RepositoryId}: RRF IDs {Before}; final IDs {After}",
+                logger.LogInformation("Reranking rank comparison for repository {RepositoryId}: RRF IDs {Before}; prioritized IDs {Prioritized}; final IDs {After}",
                     repositoryId, string.Join(',', fused.Take(topK).Select(x => x.ChunkId)),
+                    string.Join(',', prioritized.Take(topK).Select(x => x.ChunkId)),
                     string.Join(',', ordered.Select(x => x.ChunkId)));
             return new HybridSearchResponse(repositoryId, query, ordered) { RerankingStatus = "applied" };
         }
@@ -62,7 +70,7 @@ public sealed class HybridSearchService(
         }
 
         HybridSearchResponse Fallback(string status) => new(repositoryId, query,
-            fused.Take(topK).ToArray()) { RerankingStatus = status };
+            prioritized.Take(topK).ToArray()) { RerankingStatus = status };
     }
 
     public static string[] ExtractTerms(string query) => Regex.Matches(query, "[A-Za-z][A-Za-z0-9_]*|[0-9]+")
@@ -102,6 +110,57 @@ public sealed class HybridSearchService(
             .ThenBy(item => item.ChunkId)
             .Take(topK)
             .ToArray();
+    }
+
+    // Code exploration questions should surface implementation before prose or
+    // dependency manifests. A matching declaration beats a nearby call site.
+    public static IReadOnlyList<HybridSearchResult> PrioritizeImplementation(
+        string query, IReadOnlyList<HybridSearchResult> fused)
+    {
+        if (Regex.IsMatch(query, @"\b(readme|documentation|docs?)\b", RegexOptions.IgnoreCase))
+            return fused;
+        // Prefer the most specific subject word over common question verbs.
+        // Scope words have a separate path signal below.
+        var focus = ExtractTerms(query)
+            .Where(term => term is not ("backend" or "server" or "frontend" or "client") &&
+                !QuestionWords.Contains(term))
+            .OrderByDescending(term => term.Length).FirstOrDefault();
+        var backend = Regex.IsMatch(query, @"\b(backend|server)\b", RegexOptions.IgnoreCase);
+        var frontend = Regex.IsMatch(query, @"\b(frontend|client)\b", RegexOptions.IgnoreCase);
+        return fused.OrderByDescending(result => IsCode(result.FilePath))
+            .ThenByDescending(result => result.RrfScore +
+                (HasMatchingDeclaration(result.Content, focus) ? 0.002 : 0) +
+                (IsCode(result.FilePath) && result.LexicalRank == 1 ? 0.0004 : 0) +
+                (backend && IsBackend(result.FilePath) || frontend && IsFrontend(result.FilePath)
+                    ? 0.001 : 0))
+            .ThenByDescending(result => result.RrfScore)
+            .ThenBy(result => result.ChunkId)
+            .ToArray();
+    }
+
+    private static bool IsCode(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() is ".cs" or ".ts" or ".tsx" or ".js" or ".jsx" or ".vue";
+
+    private static bool IsBackend(string path) => path.Contains("/server/", StringComparison.OrdinalIgnoreCase) ||
+        path.Contains("/backend/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsFrontend(string path) => path.Contains("/src/", StringComparison.OrdinalIgnoreCase) ||
+        path.Contains("/frontend/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasMatchingDeclaration(string content, string? focus)
+    {
+        if (focus is null) return false;
+        var declarations = Regex.Matches(content,
+            @"\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(|" +
+            @"(?m)^\s*(?:public|private|internal|protected)\s+[^;\n]*?\b([A-Za-z_]\w*)\s*\(");
+        foreach (Match declaration in declarations)
+        {
+            var name = declaration.Groups[1].Success ? declaration.Groups[1].Value : declaration.Groups[2].Value;
+            var words = Regex.Matches(name, @"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+")
+                .Select(match => match.Value.ToLowerInvariant());
+            if (words.Contains(focus)) return true;
+        }
+        return false;
     }
 
     public static IReadOnlyList<HybridSearchResult> Rerank(

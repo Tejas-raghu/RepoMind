@@ -1,0 +1,30 @@
+{
+  "repositoryId": 38,
+  "repositoryName": "TaskTrail indexed sample",
+  "indexedPaths": [
+    "TaskTrail/README.md",
+    "TaskTrail/package.json",
+    "TaskTrail/server/AuthController.cs",
+    "TaskTrail/src/components/LoginForm.vue",
+    "TaskTrail/src/components/TaskBoard.vue",
+    "TaskTrail/src/data/sampleTasks.json",
+    "TaskTrail/src/map/outletMarkers.ts",
+    "TaskTrail/src/router/guards.ts",
+    "TaskTrail/src/services/apiClient.ts",
+    "TaskTrail/src/services/authService.ts",
+    "TaskTrail/src/services/taskService.ts",
+    "TaskTrail/src/utils/dateUtils.ts"
+  ],
+  "questions": [
+    { "id": "bearer", "query": "Where is the Bearer token added to requests?", "expectedPath": "TaskTrail/src/services/apiClient.ts", "anchorLine": 15, "anchor": "headers.set('Authorization'," },
+    { "id": "routes", "query": "How are protected routes secured?", "expectedPath": "TaskTrail/src/router/guards.ts", "anchorLine": 6, "anchor": "router.beforeEach((to) => {" },
+    { "id": "backend-login", "query": "Where is backend login implemented?", "expectedPath": "TaskTrail/server/AuthController.cs", "anchorLine": 23, "anchor": "[HttpPost(\"login\")]" },
+    { "id": "leaflet", "query": "Where are Leaflet markers created?", "expectedPath": "TaskTrail/src/map/outletMarkers.ts", "anchorLine": 20, "anchor": "L.marker([outlet.latitude, outlet.longitude])" },
+    { "id": "overdue", "query": "How are overdue tasks identified?", "expectedPath": "TaskTrail/src/services/taskService.ts", "anchorLine": 26, "anchor": "export function isOverdue(" },
+    { "id": "stripe", "query": "Where is Stripe payment processing implemented?", "absencePatterns": ["\\bstripe\\b"] },
+    { "id": "redis", "query": "Where is Redis caching configured?", "absencePatterns": ["\\bredis\\b"] },
+    { "id": "aws-s3", "query": "Where is AWS S3 file upload implemented?", "absencePatterns": ["\\baws\\b", "\\bs3\\b", "\\bamazon\\b"] },
+    { "id": "graphql", "query": "Where are GraphQL subscriptions implemented?", "absencePatterns": ["\\bgraphql\\b", "\\bsubscriptions?\\b"] },
+    { "id": "kubernetes", "query": "Where is Kubernetes deployment configured?", "absencePatterns": ["\\bkubernetes\\b", "\\bkubectl\\b", "\\bk8s\\b", "\\bhelm\\b"] }
+  ]
+}
