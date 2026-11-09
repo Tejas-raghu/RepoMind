@@ -9,8 +9,11 @@ public sealed class EmbeddingStore(NpgsqlDataSource dataSource)
     public async Task<long> SaveAsync(string content, string model, float[] embedding,
         CancellationToken cancellationToken)
     {
+        var column = EmbeddingCompatibility.Column(model, embedding.Length);
+        if (embedding.Any(value => !float.IsFinite(value)))
+            throw new InvalidDataException("Embedding contains a non-finite value.");
         await using var command = dataSource.CreateCommand(
-            "INSERT INTO stored_embeddings (content, model, embedding) " +
+            $"INSERT INTO stored_embeddings (content, model, {column}) " +
             "VALUES ($1, $2, $3) RETURNING id");
         command.Parameters.AddWithValue(content);
         command.Parameters.AddWithValue(model);
@@ -23,10 +26,11 @@ public sealed class EmbeddingStore(NpgsqlDataSource dataSource)
     public async Task<IReadOnlyList<SimilarEmbeddingResponse>> SearchAsync(
         string model, float[] embedding, CancellationToken cancellationToken)
     {
+        var column = EmbeddingCompatibility.Column(model, embedding.Length);
         await using var command = dataSource.CreateCommand(
-            "SELECT id, content, model, 1 - (embedding <=> $1) AS similarity " +
-            "FROM stored_embeddings WHERE model = $2 " +
-            "ORDER BY embedding <=> $1 LIMIT 1");
+            $"SELECT id, content, model, 1 - ({column} <=> $1) AS similarity " +
+            $"FROM stored_embeddings WHERE model = $2 AND {column} IS NOT NULL " +
+            $"ORDER BY {column} <=> $1 LIMIT 1");
         command.Parameters.AddWithValue(new Vector(embedding));
         command.Parameters.AddWithValue(model);
 

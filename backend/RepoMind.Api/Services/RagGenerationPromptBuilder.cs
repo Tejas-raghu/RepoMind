@@ -10,7 +10,8 @@ public sealed record RagGenerationOptions(int ContextWindowTokens, int MaxOutput
     {
         var options = new RagGenerationOptions(
             configuration.GetValue<int?>("RagGeneration:ContextWindowTokens") ?? 4096,
-            configuration.GetValue<int?>("RagGeneration:MaxOutputTokens") ?? 300,
+            configuration.GetValue<int?>("RagGeneration:MaxOutputTokens") ??
+                (configuration["Ai:Provider"] == "cloudflare" ? 1200 : 300),
             configuration.GetValue<int?>("RagGeneration:ReservedTokens") ?? 512,
             configuration.GetValue<int?>("RagGeneration:MaximumEvidenceChunks") ?? 5);
         if (options.ContextWindowTokens is < 1024 or > 262144 ||

@@ -72,32 +72,13 @@ public sealed class OllamaLlmService(HttpClient httpClient, IConfiguration confi
             !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.String)
             throw new JsonException("Invalid grounded generation envelope.");
         using var output = JsonDocument.Parse(content.GetString()!);
-        var answerRoot = output.RootElement;
-        if (answerRoot.ValueKind != JsonValueKind.Object || answerRoot.EnumerateObject().Count() != 3 ||
-            !answerRoot.TryGetProperty("summary", out var summary) || summary.ValueKind != JsonValueKind.String ||
-            !answerRoot.TryGetProperty("explanation", out var explanation) || explanation.ValueKind != JsonValueKind.String ||
-            !answerRoot.TryGetProperty("citationChunkIds", out var ids) || ids.ValueKind != JsonValueKind.Array)
-            throw new JsonException("Invalid grounded generation output.");
-        var summaryText = summary.GetString()!;
-        var explanationText = explanation.GetString()!;
-        if (summaryText.Length > 600 || explanationText.Length > 2400 || ids.GetArrayLength() > sourceIds.Count)
-            throw new JsonException("Grounded generation fields exceeded their limits.");
-        var citedIds = new List<long>();
-        foreach (var value in ids.EnumerateArray())
-        {
-            if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt64(out var id))
-                throw new JsonException("Invalid source ID.");
-            citedIds.Add(id);
-        }
-        if (citedIds.Count != citedIds.Distinct().Count() || citedIds.Any(id => !sourceIds.Contains(id)))
-            throw new JsonException("Invalid citation IDs.");
         int? promptTokens = root.TryGetProperty("prompt_eval_count", out var promptCount) &&
             promptCount.ValueKind == JsonValueKind.Number && promptCount.TryGetInt32(out var p) && p >= 0 ? p : null;
         int? generatedTokens = root.TryGetProperty("eval_count", out var generatedCount) &&
             generatedCount.ValueKind == JsonValueKind.Number && generatedCount.TryGetInt32(out var g) && g >= 0 ? g : null;
         double? durationMs = root.TryGetProperty("total_duration", out var duration) &&
             duration.ValueKind == JsonValueKind.Number && duration.TryGetInt64(out var d) && d >= 0 ? d / 1_000_000.0 : null;
-        return new GroundedGenerationResult(summaryText, explanationText, citedIds, model,
+        return GroundedOutputParser.Parse(output.RootElement, sourceIds, model,
             promptTokens, generatedTokens, durationMs);
     }
 

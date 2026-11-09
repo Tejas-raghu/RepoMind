@@ -17,7 +17,7 @@ public sealed class EmbeddingService(HttpClient httpClient, IConfiguration confi
 
         var result = await response.Content.ReadFromJsonAsync<OllamaEmbedResponse>(cancellationToken);
         // /api/embed returns one vector per input, including for a single string.
-        if (result?.Embeddings is not { Length: 1 } || result.Embeddings[0] is not { Length: > 0 } embedding
+        if (result?.Embeddings is not { Length: 1 } || result.Embeddings[0] is not { Length: 768 } embedding
             || embedding.Any(value => !float.IsFinite(value)))
         {
             throw new JsonException("Ollama returned an invalid embedding.");
@@ -37,7 +37,7 @@ public sealed class EmbeddingService(HttpClient httpClient, IConfiguration confi
 
         var result = await response.Content.ReadFromJsonAsync<OllamaEmbedResponse>(cancellationToken);
         if (result?.Embeddings is not { } vectors || vectors.Length != texts.Count ||
-            vectors.Any(vector => vector is not { Length: > 0 } ||
+            vectors.Any(vector => vector is not { Length: 768 } ||
                 vector.Any(value => !float.IsFinite(value))))
         {
             throw new JsonException("Ollama returned invalid batch embeddings.");

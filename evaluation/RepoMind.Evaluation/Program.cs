@@ -8,6 +8,8 @@ var options = Arguments.Parse(args);
 var fixture = JsonSerializer.Deserialize<Fixture>(await File.ReadAllTextAsync(options.FixturePath),
     new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
     ?? throw new InvalidDataException("Fixture is empty.");
+if (options.RepositoryId is { } repositoryId)
+    fixture = fixture with { RepositoryId = repositoryId };
 if (fixture.Questions.Length != 10 || fixture.Questions.Count(q => q.ExpectedPath is not null) != 5 ||
     fixture.Questions.Count(q => q.ExpectedPath is null) != 5 ||
     fixture.Questions.Select(q => q.Id).Distinct().Count() != 10)
@@ -276,7 +278,8 @@ sealed class Outcome(Question question)
     public double? AnswerMs { get; set; }
 }
 
-sealed record Arguments(string BaseUrl, string FixturePath, string ReportPath, int TimeoutSeconds)
+sealed record Arguments(string BaseUrl, string FixturePath, string ReportPath, int TimeoutSeconds,
+    int? RepositoryId)
 {
     public static Arguments Parse(string[] args)
     {
@@ -289,8 +292,11 @@ sealed record Arguments(string BaseUrl, string FixturePath, string ReportPath, i
         }
         var timeout = int.Parse(values.GetValueOrDefault("--timeout-seconds", "210"));
         if (timeout is < 1 or > 600) throw new ArgumentOutOfRangeException(nameof(timeout));
+        var repositoryId = values.TryGetValue("--repository-id", out var idText) ? int.Parse(idText) : (int?)null;
+        if (repositoryId is <= 0) throw new ArgumentOutOfRangeException(nameof(repositoryId));
         return new Arguments(values.GetValueOrDefault("--base-url", "http://127.0.0.1:5000"),
             values.GetValueOrDefault("--fixture", "evaluation/day14-tasktrail.json"),
-            values.GetValueOrDefault("--report", "evaluation/day14-report.md"), timeout);
+            values.GetValueOrDefault("--report", "evaluation/day14-report.md"), timeout,
+            repositoryId);
     }
 }

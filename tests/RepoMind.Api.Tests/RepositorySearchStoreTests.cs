@@ -9,6 +9,60 @@ namespace RepoMind.Api.Tests;
 public sealed class RepositorySearchStoreTests
 {
     [Fact]
+    public async Task Cloudflare_vectors_are_isolated_and_old_model_queries_are_rejected()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("REPOMIND_TEST_CONNECTION")
+            ?? "Host=localhost;Port=5432;Database=repomind;Username=repomind;Password=localdev";
+        var builder = new NpgsqlDataSourceBuilder(connectionString);
+        builder.UseVector();
+        await using var dataSource = builder.Build();
+        var store = new RepositorySearchStore(dataSource, new ConfigurationBuilder().Build());
+        long id;
+        await using (var insert = dataSource.CreateCommand("INSERT INTO repositories " +
+            "(name, status, embedding_provider, embedding_model) " +
+            "VALUES ('cloudflare-test', 'completed', 'cloudflare', $1) RETURNING id"))
+        {
+            insert.Parameters.AddWithValue(CloudflareEmbeddingService.Model);
+            id = (long)(await insert.ExecuteScalarAsync() ?? throw new InvalidOperationException());
+        }
+        try
+        {
+            var vector = new float[1024];
+            vector[0] = 1;
+            await using (var insert = dataSource.CreateCommand("INSERT INTO repository_chunks " +
+                "(repository_id, source_path, start_line, end_line, content, model, embedding_cf) " +
+                "VALUES ($1, 'src/api.ts', 1, 2, 'Bearer header', $2, $3)"))
+            {
+                insert.Parameters.AddWithValue(id);
+                insert.Parameters.AddWithValue(CloudflareEmbeddingService.Model);
+                insert.Parameters.AddWithValue(new Vector(vector));
+                await insert.ExecuteNonQueryAsync();
+            }
+            await store.EnsureCompatibleAsync(id, "cloudflare", CloudflareEmbeddingService.Model,
+                1024, CancellationToken.None);
+            await Assert.ThrowsAsync<EmbeddingModelMismatchException>(() => store.EnsureCompatibleAsync(
+                id, "ollama", "embeddinggemma", 768, CancellationToken.None));
+            var hits = await store.SearchVectorCandidatesAsync(id, CloudflareEmbeddingService.Model,
+                vector, 5, CancellationToken.None);
+            Assert.Single(hits);
+            Assert.Equal("src/api.ts", hits[0].FilePath);
+            Assert.Empty(await store.SearchVectorCandidatesAsync(id, "embeddinggemma",
+                UnitVector(1, 0), 5, CancellationToken.None));
+        }
+        finally
+        {
+            await using var deleteChunks = dataSource.CreateCommand(
+                "DELETE FROM repository_chunks WHERE repository_id = $1");
+            deleteChunks.Parameters.AddWithValue(id);
+            await deleteChunks.ExecuteNonQueryAsync();
+            await using var deleteRepository = dataSource.CreateCommand(
+                "DELETE FROM repositories WHERE id = $1");
+            deleteRepository.Parameters.AddWithValue(id);
+            await deleteRepository.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public async Task Search_is_scoped_ordered_limited_and_returns_source_metadata()
     {
         var connectionString = Environment.GetEnvironmentVariable("REPOMIND_TEST_CONNECTION")

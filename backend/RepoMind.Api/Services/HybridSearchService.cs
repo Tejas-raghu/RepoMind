@@ -22,7 +22,9 @@ public sealed class HybridSearchService(
 
     private readonly int vectorCandidates = CandidateCount(configuration, "HybridSearch:VectorCandidates");
     private readonly int lexicalCandidates = CandidateCount(configuration, "HybridSearch:LexicalCandidates");
-    private readonly bool rerankingEnabled = configuration.GetValue<bool>("Reranking:Enabled");
+    private readonly bool rerankingEnabled = configuration.GetValue<bool>("Reranking:Enabled") &&
+        (configuration["Ai:Provider"] != "cloudflare" ||
+         configuration.GetValue<bool>("Cloudflare:RerankingEnabled"));
     private readonly int rerankingCandidates = RerankingCandidateCount(configuration);
 
     public async Task<HybridSearchResponse?> SearchAsync(long repositoryId, string query,
@@ -33,6 +35,8 @@ public sealed class HybridSearchService(
             return new HybridSearchResponse(repositoryId, query, []);
 
         var embedding = await embeddings.GenerateAsync(query, cancellationToken);
+        await store.EnsureCompatibleAsync(repositoryId, embedding.Provider, embedding.Model,
+            embedding.Dimensions, cancellationToken);
         var vector = await store.SearchVectorCandidatesAsync(repositoryId, embedding.Model,
             embedding.Embedding, vectorCandidates, cancellationToken);
         var lexical = await store.SearchLexicalCandidatesAsync(repositoryId, embedding.Model,

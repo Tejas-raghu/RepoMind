@@ -1,8 +1,9 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>7c4e7579-b67b-4612-9c04-d1a0a0d51d3d</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Pgvector" Version="0.3.2" />

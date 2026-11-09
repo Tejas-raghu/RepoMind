@@ -14,4 +14,4 @@ public sealed record LlmChatRequest(string? Prompt)
     }
 }
 
-public sealed record LlmChatResponse(string Answer, int PromptTokens, int GeneratedTokens, double DurationMs);
+public sealed record LlmChatResponse(string Answer, int? PromptTokens, int? GeneratedTokens, double DurationMs);

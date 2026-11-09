@@ -21,6 +21,8 @@ public sealed class RepositoryUploadService(
         // Embed each distinct text once, then store every source chunk.
         var uniqueTexts = chunks.Select(chunk => chunk.Content)
             .Distinct(StringComparer.Ordinal).ToArray();
+        if (uniqueTexts.Length == 0)
+            throw new InvalidDataException("ZIP has no indexable source chunks.");
         var embeddingsByText = new Dictionary<string, EmbeddingResponse>(uniqueTexts.Length,
             StringComparer.Ordinal);
         for (var offset = 0; offset < uniqueTexts.Length; offset += 16)
@@ -33,15 +35,27 @@ public sealed class RepositoryUploadService(
                 embeddingsByText.Add(batch[index], vectors[index]);
             }
         }
+        var profile = embeddingsByText.Values.First();
+        foreach (var result in embeddingsByText.Values)
+        {
+            EmbeddingCompatibility.Validate(result);
+            if (result.Model != profile.Model || result.Provider != profile.Provider ||
+                result.Dimensions != profile.Dimensions)
+                throw new InvalidDataException("Embedding model changed during upload.");
+        }
+        var column = EmbeddingCompatibility.Column(profile.Model, profile.Dimensions);
 
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         long repositoryId;
         await using (var command = new NpgsqlCommand(
-            "INSERT INTO repositories (name, status) VALUES ($1, 'completed') RETURNING id",
+            "INSERT INTO repositories (name, status, embedding_provider, embedding_model) " +
+            "VALUES ($1, 'completed', $2, $3) RETURNING id",
             connection, transaction))
         {
             command.Parameters.AddWithValue(Path.GetFileNameWithoutExtension(fileName));
+            command.Parameters.AddWithValue(profile.Provider);
+            command.Parameters.AddWithValue(profile.Model);
             repositoryId = (long)(await command.ExecuteScalarAsync(cancellationToken)
                 ?? throw new InvalidOperationException("Repository insert returned no ID."));
         }
@@ -51,7 +65,7 @@ public sealed class RepositoryUploadService(
             var embedding = embeddingsByText[chunk.Content];
             await using var command = new NpgsqlCommand(
                 "INSERT INTO repository_chunks " +
-                "(repository_id, source_path, start_line, end_line, content, model, embedding) " +
+                $"(repository_id, source_path, start_line, end_line, content, model, {column}) " +
                 "VALUES ($1, $2, $3, $4, $5, $6, $7)", connection, transaction);
             command.Parameters.AddWithValue(repositoryId);
             command.Parameters.AddWithValue(chunk.Path);

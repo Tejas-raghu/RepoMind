@@ -13,40 +13,57 @@ builder.Logging.AddConsole();
 builder.Services.Configure<FormOptions>(options =>
     options.MultipartBodyLengthLimit = RepositoryZipReader.MaxUploadBytes + 256 * 1024);
 
-builder.Services.AddHttpClient<IEmbeddingService, EmbeddingService>(client =>
+var aiProvider = builder.Configuration["Ai:Provider"] ?? "ollama";
+if (aiProvider == "cloudflare")
 {
-    client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
-        ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
-    // Loading a local model on the first request can take longer than later requests.
-    client.Timeout = TimeSpan.FromMinutes(2);
-});
-builder.Services.AddHttpClient<ILlmService, OllamaLlmService>(client =>
+    builder.Services.AddHttpClient<CloudflareAiClient>(client =>
+    {
+        client.BaseAddress = new Uri("https://api.cloudflare.com/");
+        client.Timeout = TimeSpan.FromSeconds(120);
+    });
+    builder.Services.AddScoped<IEmbeddingService, CloudflareEmbeddingService>();
+    builder.Services.AddScoped<ILlmService, CloudflareLlmService>();
+    builder.Services.AddScoped<IEvidenceVerificationService, CloudflareEvidenceVerificationService>();
+    builder.Services.AddScoped<IRerankingService, CloudflareRerankingService>();
+}
+else if (aiProvider == "ollama")
 {
-    client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
-        ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
-    var timeoutSeconds = builder.Configuration.GetValue<int>("Ollama:ChatTimeoutSeconds");
-    if (timeoutSeconds <= 0)
-        throw new InvalidOperationException("Ollama:ChatTimeoutSeconds must be positive.");
-    client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
-});
-builder.Services.AddHttpClient<IRerankingService, OllamaRerankingService>(client =>
-{
-    client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
-        ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
-    var seconds = builder.Configuration.GetValue<int?>("Reranking:TimeoutSeconds") ?? 120;
-    if (seconds is < 1 or > 180)
-        throw new InvalidOperationException("Reranking:TimeoutSeconds must be between 1 and 180.");
-    client.Timeout = TimeSpan.FromSeconds(seconds);
-});
-builder.Services.AddHttpClient<IEvidenceVerificationService, OllamaEvidenceVerificationService>(client =>
-{
-    client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
-        ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
-    var seconds = builder.Configuration.GetValue<int?>("EvidenceVerification:TimeoutSeconds") ?? 60;
-    if (seconds is < 1 or > 180)
-        throw new InvalidOperationException("EvidenceVerification:TimeoutSeconds must be between 1 and 180.");
-    client.Timeout = TimeSpan.FromSeconds(seconds);
-});
+    builder.Services.AddHttpClient<IEmbeddingService, EmbeddingService>(client =>
+    {
+        client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
+            ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
+        // Loading a local model on the first request can take longer than later requests.
+        client.Timeout = TimeSpan.FromMinutes(2);
+    });
+    builder.Services.AddHttpClient<ILlmService, OllamaLlmService>(client =>
+    {
+        client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
+            ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
+        var timeoutSeconds = builder.Configuration.GetValue<int>("Ollama:ChatTimeoutSeconds");
+        if (timeoutSeconds <= 0)
+            throw new InvalidOperationException("Ollama:ChatTimeoutSeconds must be positive.");
+        client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+    });
+    builder.Services.AddHttpClient<IRerankingService, OllamaRerankingService>(client =>
+    {
+        client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
+            ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
+        var seconds = builder.Configuration.GetValue<int?>("Reranking:TimeoutSeconds") ?? 120;
+        if (seconds is < 1 or > 180)
+            throw new InvalidOperationException("Reranking:TimeoutSeconds must be between 1 and 180.");
+        client.Timeout = TimeSpan.FromSeconds(seconds);
+    });
+    builder.Services.AddHttpClient<IEvidenceVerificationService, OllamaEvidenceVerificationService>(client =>
+    {
+        client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
+            ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
+        var seconds = builder.Configuration.GetValue<int?>("EvidenceVerification:TimeoutSeconds") ?? 60;
+        if (seconds is < 1 or > 180)
+            throw new InvalidOperationException("EvidenceVerification:TimeoutSeconds must be between 1 and 180.");
+        client.Timeout = TimeSpan.FromSeconds(seconds);
+    });
+}
+else throw new InvalidOperationException("Ai:Provider must be ollama or cloudflare.");
 builder.Services.AddSingleton(_ =>
 {
     var connectionString = builder.Configuration.GetConnectionString("RepoMind")
@@ -69,6 +86,21 @@ builder.Services.AddScoped<IRagAnswerService, RagAnswerService>();
 builder.Services.AddSingleton<RagGenerationPromptBuilder>();
 
 var app = builder.Build();
+app.Use(async (context, next) =>
+{
+    try { await next(context); }
+    catch (CloudflareAiException exception)
+    {
+        context.Response.StatusCode = exception.StatusCode;
+        await Results.Problem(exception.Message, statusCode: exception.StatusCode)
+            .ExecuteAsync(context);
+    }
+    catch (EmbeddingModelMismatchException exception)
+    {
+        context.Response.StatusCode = 409;
+        await Results.Problem(exception.Message, statusCode: 409).ExecuteAsync(context);
+    }
+});
 
 app.MapPost("/api/llm/chat", async (
     LlmChatRequest request,
@@ -85,19 +117,19 @@ app.MapPost("/api/llm/chat", async (
     }
     catch (HttpRequestException exception)
     {
-        logger.LogWarning(exception, "Ollama chat request failed.");
-        return Results.Problem("Check that Ollama is running and the configured chat model is installed.",
+        logger.LogWarning(exception, "AI chat request failed.");
+        return Results.Problem("The configured AI chat provider is unavailable.",
             statusCode: StatusCodes.Status502BadGateway);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
-        return Results.Problem("Ollama chat request timed out.",
+        return Results.Problem("AI chat request timed out.",
             statusCode: StatusCodes.Status504GatewayTimeout);
     }
     catch (JsonException exception)
     {
-        logger.LogWarning(exception, "Ollama returned an invalid chat response.");
-        return Results.Problem("Ollama returned an invalid chat response.",
+        logger.LogWarning(exception, "AI provider returned an invalid chat response.");
+        return Results.Problem("AI provider returned an invalid chat response.",
             statusCode: StatusCodes.Status502BadGateway);
     }
 });
@@ -122,19 +154,19 @@ app.MapPost("/api/embeddings", async (
     }
     catch (HttpRequestException exception)
     {
-        logger.LogWarning(exception, "Ollama embedding request failed.");
-        return Results.Problem("Check that Ollama is running and embeddinggemma is installed. Also check the input length.",
+        logger.LogWarning(exception, "AI embedding request failed.");
+        return Results.Problem("The configured embedding provider is unavailable or rejected the input.",
             statusCode: StatusCodes.Status502BadGateway);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
-        return Results.Problem("Ollama did not respond within two minutes.",
+        return Results.Problem("Embedding provider did not respond within two minutes.",
             statusCode: StatusCodes.Status504GatewayTimeout);
     }
     catch (JsonException exception)
     {
-        logger.LogWarning(exception, "Ollama returned an invalid response.");
-        return Results.Problem("Ollama returned an invalid embedding response.",
+        logger.LogWarning(exception, "AI provider returned an invalid embedding response.");
+        return Results.Problem("AI provider returned an invalid embedding response.",
             statusCode: StatusCodes.Status502BadGateway);
     }
 });
@@ -168,19 +200,19 @@ app.MapPost("/api/embeddings/store", async (
     }
     catch (HttpRequestException exception)
     {
-        logger.LogWarning(exception, "Ollama embedding request failed.");
-        return Results.Problem("Check that Ollama is running and embeddinggemma is installed. Also check the input length.",
+        logger.LogWarning(exception, "AI embedding request failed.");
+        return Results.Problem("The configured embedding provider is unavailable or rejected the input.",
             statusCode: StatusCodes.Status502BadGateway);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
-        return Results.Problem("Ollama or PostgreSQL did not respond within two minutes.",
+        return Results.Problem("Embedding provider or PostgreSQL did not respond within two minutes.",
             statusCode: StatusCodes.Status504GatewayTimeout);
     }
     catch (JsonException exception)
     {
-        logger.LogWarning(exception, "Ollama returned an invalid response.");
-        return Results.Problem("Ollama returned an invalid embedding response.",
+        logger.LogWarning(exception, "AI provider returned an invalid embedding response.");
+        return Results.Problem("AI provider returned an invalid embedding response.",
             statusCode: StatusCodes.Status502BadGateway);
     }
 });
@@ -213,19 +245,19 @@ app.MapPost("/api/embeddings/search", async (
     }
     catch (HttpRequestException exception)
     {
-        logger.LogWarning(exception, "Ollama embedding request failed.");
-        return Results.Problem("Check that Ollama is running and embeddinggemma is installed. Also check the input length.",
+        logger.LogWarning(exception, "AI embedding request failed.");
+        return Results.Problem("The configured embedding provider is unavailable or rejected the input.",
             statusCode: StatusCodes.Status502BadGateway);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
-        return Results.Problem("Ollama or PostgreSQL did not respond within two minutes.",
+        return Results.Problem("Embedding provider or PostgreSQL did not respond within two minutes.",
             statusCode: StatusCodes.Status504GatewayTimeout);
     }
     catch (JsonException exception)
     {
-        logger.LogWarning(exception, "Ollama returned an invalid response.");
-        return Results.Problem("Ollama returned an invalid embedding response.",
+        logger.LogWarning(exception, "AI provider returned an invalid embedding response.");
+        return Results.Problem("AI provider returned an invalid embedding response.",
             statusCode: StatusCodes.Status502BadGateway);
     }
 });
@@ -358,13 +390,13 @@ app.MapPost("/api/repositories/upload", async (
     }
     catch (HttpRequestException)
     {
-        logger.LogWarning("Repository upload could not reach Ollama.");
-        return Results.Problem("Ollama could not generate an embedding.", statusCode: 502);
+        logger.LogWarning("Repository upload could not reach the embedding provider.");
+        return Results.Problem("Embedding provider could not generate an embedding.", statusCode: 502);
     }
     catch (JsonException)
     {
-        logger.LogWarning("Ollama returned an invalid embedding during repository upload.");
-        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+        logger.LogWarning("Embedding provider returned an invalid upload vector.");
+        return Results.Problem("Embedding provider returned an invalid embedding.", statusCode: 502);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
@@ -396,6 +428,8 @@ app.MapPost("/api/repositories/{repositoryId}/search", async (
             return Results.Ok(new RepositorySearchResponse(parsedRepositoryId, []));
 
         var query = await embeddings.GenerateAsync(request.Query!.Trim(), cancellationToken);
+        await store.EnsureCompatibleAsync(parsedRepositoryId, query.Provider, query.Model,
+            query.Dimensions, cancellationToken);
         var results = await store.SearchAsync(parsedRepositoryId, query.Model, query.Embedding,
             request.TopK!.Value, cancellationToken);
         return Results.Ok(new RepositorySearchResponse(parsedRepositoryId, results));
@@ -407,13 +441,13 @@ app.MapPost("/api/repositories/{repositoryId}/search", async (
     }
     catch (HttpRequestException)
     {
-        logger.LogWarning("Repository search could not reach Ollama.");
-        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+        logger.LogWarning("Repository search could not reach the embedding provider.");
+        return Results.Problem("Embedding provider could not generate the query embedding.", statusCode: 502);
     }
     catch (JsonException)
     {
-        logger.LogWarning("Ollama returned an invalid query embedding.");
-        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+        logger.LogWarning("Embedding provider returned an invalid query embedding.");
+        return Results.Problem("Embedding provider returned an invalid embedding.", statusCode: 502);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
@@ -451,13 +485,13 @@ app.MapPost("/api/repositories/{repositoryId}/rag/context", async (
     }
     catch (HttpRequestException)
     {
-        logger.LogWarning("RAG context could not reach Ollama embeddings.");
-        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+        logger.LogWarning("RAG context could not reach the embedding provider.");
+        return Results.Problem("Embedding provider could not generate the query embedding.", statusCode: 502);
     }
     catch (JsonException)
     {
-        logger.LogWarning("Ollama returned an invalid query embedding for RAG context.");
-        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+        logger.LogWarning("Embedding provider returned an invalid RAG context vector.");
+        return Results.Problem("Embedding provider returned an invalid embedding.", statusCode: 502);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
@@ -495,13 +529,13 @@ app.MapPost("/api/repositories/{repositoryId}/hybrid/search", async (
     }
     catch (HttpRequestException)
     {
-        logger.LogWarning("Hybrid search could not reach Ollama embeddings.");
-        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+        logger.LogWarning("Hybrid search could not reach the embedding provider.");
+        return Results.Problem("Embedding provider could not generate the query embedding.", statusCode: 502);
     }
     catch (JsonException)
     {
-        logger.LogWarning("Ollama returned an invalid hybrid-search embedding.");
-        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+        logger.LogWarning("Embedding provider returned an invalid hybrid-search vector.");
+        return Results.Problem("Embedding provider returned an invalid embedding.", statusCode: 502);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
@@ -540,12 +574,12 @@ app.MapPost("/api/repositories/{repositoryId}/rag/verify", async (
     catch (HttpRequestException)
     {
         logger.LogWarning("Evidence verification could not generate a query embedding.");
-        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+        return Results.Problem("Embedding provider could not generate the query embedding.", statusCode: 502);
     }
     catch (JsonException)
     {
-        logger.LogWarning("Ollama returned an invalid query embedding for evidence verification.");
-        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+        logger.LogWarning("Embedding provider returned an invalid verification query vector.");
+        return Results.Problem("Embedding provider returned an invalid embedding.", statusCode: 502);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
@@ -584,12 +618,12 @@ app.MapPost("/api/repositories/{repositoryId}/rag/answer", async (
     catch (HttpRequestException)
     {
         logger.LogWarning("RAG answer could not generate a query embedding.");
-        return Results.Problem("Ollama could not generate the query embedding.", statusCode: 502);
+        return Results.Problem("Embedding provider could not generate the query embedding.", statusCode: 502);
     }
     catch (JsonException)
     {
-        logger.LogWarning("Ollama returned an invalid query embedding for RAG answer.");
-        return Results.Problem("Ollama returned an invalid embedding.", statusCode: 502);
+        logger.LogWarning("Embedding provider returned an invalid answer query vector.");
+        return Results.Problem("Embedding provider returned an invalid embedding.", statusCode: 502);
     }
     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {

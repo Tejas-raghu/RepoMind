@@ -13,7 +13,8 @@ public interface IRagEvidenceVerifier
         CancellationToken cancellationToken);
 }
 
-public sealed class RagEvidenceVerifier(HybridSearchService search, IEvidenceVerificationService verifier)
+public sealed class RagEvidenceVerifier(HybridSearchService search, IEvidenceVerificationService verifier,
+    ILogger<RagEvidenceVerifier>? logger = null)
     : IRagEvidenceVerifier
 {
     public async Task<EvidenceVerificationResponse?> VerifyAsync(long repositoryId, string query,
@@ -56,15 +57,17 @@ public sealed class RagEvidenceVerifier(HybridSearchService search, IEvidenceVer
             stopwatch.Stop();
             return Unavailable();
         }
-        catch (JsonException)
+        catch (JsonException exception)
         {
             stopwatch.Stop();
+            logger?.LogWarning("Evidence verifier returned invalid structured output: {Reason}",
+                exception.Message);
             return Unavailable();
         }
 
         VerifiedRetrieval Unavailable() => Result(new EvidenceVerificationResult(
             EvidenceVerificationStatus.VerificationUnavailable, false, [],
-            "The local evidence verifier is unavailable."));
+            "The evidence verifier is unavailable."));
 
         VerifiedRetrieval Result(EvidenceVerificationResult decision)
         {
@@ -80,7 +83,7 @@ public sealed class RagEvidenceVerifier(HybridSearchService search, IEvidenceVer
                 EvidenceVerificationStatus.Supported => "Direct source evidence was identified.",
                 EvidenceVerificationStatus.InsufficientEvidence => "No supplied source directly supports the request.",
                 EvidenceVerificationStatus.Uncertain => "The supplied source evidence is partial or ambiguous.",
-                _ => "The local evidence verifier is unavailable."
+                _ => "The evidence verifier is unavailable."
             };
             var verification = new EvidenceVerificationResponse(repositoryId, query, decision.Status,
                 decision.Answerable, decision.EvidenceChunkIds, sources, safeReason)

@@ -36,9 +36,13 @@ public sealed class EmbeddingServiceTests
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            var first = new float[768];
+            var second = new float[768];
+            first[0] = second[1] = 1;
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"embeddings\":[[1,0],[0,1]]}", Encoding.UTF8, "application/json")
+                Content = new StringContent(JsonSerializer.Serialize(new { embeddings = new[] { first, second } }),
+                    Encoding.UTF8, "application/json")
             };
         }
     }

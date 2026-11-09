@@ -11,6 +11,27 @@ public sealed class RepositorySearchStore(NpgsqlDataSource dataSource, IConfigur
     private readonly double minimumSimilarity = configuration.GetValue<double?>(
         "RepositorySearch:MinimumSimilarity") ?? DefaultMinimumSimilarity;
 
+    public async Task EnsureCompatibleAsync(long repositoryId, string provider, string model,
+        int dimensions, CancellationToken cancellationToken)
+    {
+        _ = EmbeddingCompatibility.Column(model, dimensions);
+        await using var command = dataSource.CreateCommand(
+            "SELECT r.embedding_provider, r.embedding_model, " +
+            "(SELECT c.model FROM repository_chunks c WHERE c.repository_id = r.id ORDER BY c.id LIMIT 1) " +
+            "FROM repositories r WHERE r.id = $1");
+        command.Parameters.AddWithValue(repositoryId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return;
+        var storedModel = !reader.IsDBNull(1) ? reader.GetString(1) :
+            !reader.IsDBNull(2) ? reader.GetString(2) : null;
+        var storedProvider = reader.IsDBNull(0) ?
+            storedModel?.StartsWith("@cf/", StringComparison.Ordinal) == true ? "cloudflare" : "ollama" :
+            reader.GetString(0);
+        if (storedModel is not null && (storedProvider != provider || storedModel != model))
+            throw new EmbeddingModelMismatchException(
+                $"Repository {repositoryId} uses {storedProvider}/{storedModel}; query uses {provider}/{model}. Re-upload the ZIP in the selected provider mode.");
+    }
+
     public async Task<bool> ExistsAsync(long repositoryId, CancellationToken cancellationToken)
     {
         await using var command = dataSource.CreateCommand(
@@ -44,13 +65,14 @@ public sealed class RepositorySearchStore(NpgsqlDataSource dataSource, IConfigur
         long repositoryId, string model, float[] embedding, int topK,
         double? cutoff, CancellationToken cancellationToken)
     {
+        var column = EmbeddingCompatibility.Column(model, embedding.Length);
         await using var command = dataSource.CreateCommand(
             "SELECT id, source_path, start_line, end_line, content, " +
-            "1 - (embedding <=> $1) AS similarity " +
+            $"1 - ({column} <=> $1) AS similarity " +
             "FROM repository_chunks " +
-            "WHERE repository_id = $2 AND model = $3 " +
-            (cutoff is null ? "" : "AND 1 - (embedding <=> $1) >= $5 ") +
-            "ORDER BY embedding <=> $1 ASC, id ASC LIMIT $4");
+            $"WHERE repository_id = $2 AND model = $3 AND {column} IS NOT NULL " +
+            (cutoff is null ? "" : $"AND 1 - ({column} <=> $1) >= $5 ") +
+            $"ORDER BY {column} <=> $1 ASC, id ASC LIMIT $4");
         command.Parameters.AddWithValue(new Vector(embedding));
         command.Parameters.AddWithValue(repositoryId);
         command.Parameters.AddWithValue(model);
@@ -73,18 +95,19 @@ public sealed class RepositorySearchStore(NpgsqlDataSource dataSource, IConfigur
         int topK, CancellationToken cancellationToken)
     {
         if (terms.Count == 0) return [];
+        var column = EmbeddingCompatibility.Column(model, embedding.Length);
         // Terms are reduced to letters, digits and underscores before to_tsquery sees them.
         var tsQuery = string.Join(" | ", terms);
         await using var command = dataSource.CreateCommand(
             "WITH query AS (SELECT to_tsquery('simple', $3) AS tsq) " +
             "SELECT c.id, c.source_path, c.start_line, c.end_line, c.content, " +
-            "1 - (c.embedding <=> $4) AS similarity, " +
+            $"1 - (c.{column} <=> $4) AS similarity, " +
             "ts_rank_cd(to_tsvector('simple', c.content || ' ' || c.source_path), query.tsq) AS text_rank, " +
             "(SELECT count(*) FROM unnest($5::text[]) term " +
             " WHERE strpos(lower(c.content), term) > 0 OR strpos(lower(c.source_path), term) > 0) AS exact_hits, " +
             "(c.source_path ~* '\\.(cs|ts|tsx|js|jsx|vue)$') AS is_code " +
             "FROM repository_chunks c CROSS JOIN query " +
-            "WHERE c.repository_id = $1 AND c.model = $2 " +
+            $"WHERE c.repository_id = $1 AND c.model = $2 AND c.{column} IS NOT NULL " +
             "AND (to_tsvector('simple', c.content || ' ' || c.source_path) @@ query.tsq " +
             "OR EXISTS (SELECT 1 FROM unnest($5::text[]) term " +
             " WHERE strpos(lower(c.content), term) > 0 OR strpos(lower(c.source_path), term) > 0)) " +

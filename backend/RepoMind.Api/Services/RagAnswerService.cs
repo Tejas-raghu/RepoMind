@@ -58,12 +58,13 @@ public sealed class RagAnswerService(IRagEvidenceVerifier verifier, RagGeneratio
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return Failure("generation_unavailable", "The local answer model timed out.");
+            return Failure("generation_unavailable", "The answer model timed out.");
         }
         catch (Exception exception) when (exception is HttpRequestException or JsonException)
         {
-            logger.LogWarning("Grounded answer generation failed: {ErrorType}", exception.GetType().Name);
-            return Failure("generation_unavailable", "The local answer model returned no usable answer.");
+            logger.LogWarning("Grounded answer generation failed: {ErrorType}: {Reason}",
+                exception.GetType().Name, exception.Message);
+            return Failure("generation_unavailable", "The answer model returned no usable answer.");
         }
 
         logger.LogInformation("RAG prompt estimate {EstimatedTokens}, actual {ActualTokens}, output {OutputTokens}, omitted chunks {OmittedCount}",

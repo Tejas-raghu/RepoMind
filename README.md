@@ -1,5 +1,7 @@
 # RepoMind
 
+Day 14.5 optional provider: [Cloudflare Workers AI setup and smoke test](docs/day14-5-cloudflare.md).
+
 ## Day 14: Basic RAG evaluation
 
 The local evaluator uses the indexed TaskTrail sample at repository ID 38. Its
