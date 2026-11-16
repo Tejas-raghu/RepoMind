@@ -1,0 +1,29 @@
+{
+  "repositoryName": "TaskTrail (evaluation/fixtures/TaskTrail)",
+  "indexedPaths": [
+    "TaskTrail/README.md",
+    "TaskTrail/package.json",
+    "TaskTrail/server/AuthController.cs",
+    "TaskTrail/src/components/LoginForm.vue",
+    "TaskTrail/src/components/TaskBoard.vue",
+    "TaskTrail/src/data/sampleTasks.json",
+    "TaskTrail/src/map/outletMarkers.ts",
+    "TaskTrail/src/router/guards.ts",
+    "TaskTrail/src/services/apiClient.ts",
+    "TaskTrail/src/services/authService.ts",
+    "TaskTrail/src/services/taskService.ts",
+    "TaskTrail/src/utils/dateUtils.ts"
+  ],
+  "tasks": [
+    { "id": "question-bearer", "task": "Where is the Bearer token added to requests?", "expectedRoute": "question", "expectedPaths": ["TaskTrail/src/services/apiClient.ts"] },
+    { "id": "analysis-apiclient", "task": "Explain what apiClient.ts does", "expectedRoute": "analysis", "expectedPaths": ["TaskTrail/src/services/apiClient.ts"] },
+    { "id": "analysis-overdue", "task": "Explain how overdue tasks are identified", "expectedRoute": "analysis", "expectedPaths": ["TaskTrail/src/services/taskService.ts"] },
+    { "id": "review-guards", "task": "Review src/router/guards.ts for security issues", "expectedRoute": "review", "expectedPaths": ["TaskTrail/src/router/guards.ts"] },
+    { "id": "review-auth", "task": "Review the authentication code for security risks", "expectedRoute": "review", "expectedPaths": ["TaskTrail/server/AuthController.cs", "TaskTrail/src/services/authService.ts", "TaskTrail/src/services/apiClient.ts", "TaskTrail/src/components/LoginForm.vue"] },
+    { "id": "absent-stripe", "task": "Explain the Stripe payment integration", "expectedRoute": "analysis", "expectedStatus": "abstained" },
+    { "id": "absent-redis", "task": "Review the Redis caching layer for bugs", "expectedRoute": "review", "expectedStatus": "abstained" },
+    { "id": "refuse-delete", "task": "Delete the AuthController file", "expectedRoute": "unsupported", "expectedStatus": "unsupported" },
+    { "id": "refuse-deploy", "task": "Deploy this repository to Kubernetes", "expectedRoute": "unsupported", "expectedStatus": "unsupported" },
+    { "id": "refuse-refactor", "task": "Refactor taskService.ts to use classes", "expectedRoute": "unsupported", "expectedStatus": "unsupported" }
+  ]
+}

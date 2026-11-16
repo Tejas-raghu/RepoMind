@@ -1,0 +1,5 @@
+[
+  {"id":"t1","title":"Review pull request","dueAt":"2026-10-20T10:00:00Z","status":"todo","assignedTo":"Alex"},
+  {"id":"t2","title":"Check route markers","dueAt":"2026-10-25T10:00:00Z","status":"in_progress","assignedTo":"Sam"},
+  {"id":"t3","title":"Update docs","dueAt":null,"status":"done","assignedTo":"Alex"}
+]

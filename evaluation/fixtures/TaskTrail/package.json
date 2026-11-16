@@ -1,0 +1,11 @@
+{
+  "name": "tasktrail-repomind-sample",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Synthetic source files for RepoMind ingestion tests",
+  "dependencies": {
+    "vue": "^3.5.0",
+    "vue-router": "^4.0.0",
+    "leaflet": "^1.9.0"
+  }
+}

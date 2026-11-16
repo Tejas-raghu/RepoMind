@@ -5,6 +5,13 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 
 var options = Arguments.Parse(args);
+if (options.Mode == "agents")
+{
+    using var agentCancellation = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; agentCancellation.Cancel(); };
+    Environment.ExitCode = await AgentEvaluation.RunAsync(options, agentCancellation.Token);
+    return;
+}
 var fixture = JsonSerializer.Deserialize<Fixture>(await File.ReadAllTextAsync(options.FixturePath),
     new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
     ?? throw new InvalidDataException("Fixture is empty.");
@@ -279,7 +286,7 @@ sealed class Outcome(Question question)
 }
 
 sealed record Arguments(string BaseUrl, string FixturePath, string ReportPath, int TimeoutSeconds,
-    int? RepositoryId)
+    int? RepositoryId, string Mode = "rag")
 {
     public static Arguments Parse(string[] args)
     {
@@ -287,16 +294,19 @@ sealed record Arguments(string BaseUrl, string FixturePath, string ReportPath, i
         for (var index = 0; index < args.Length; index += 2)
         {
             if (index + 1 >= args.Length || !args[index].StartsWith("--"))
-                throw new ArgumentException("Use --base-url, --fixture, --report, and --timeout-seconds with values.");
+                throw new ArgumentException("Use --mode (rag|agents), --base-url, --repository-id, --fixture, --report, and --timeout-seconds with values.");
             values[args[index]] = args[index + 1];
         }
-        var timeout = int.Parse(values.GetValueOrDefault("--timeout-seconds", "210"));
+        var mode = values.GetValueOrDefault("--mode", "rag");
+        if (mode is not ("rag" or "agents")) throw new ArgumentException("--mode must be rag or agents.");
+        var agents = mode == "agents";
+        var timeout = int.Parse(values.GetValueOrDefault("--timeout-seconds", agents ? "600" : "210"));
         if (timeout is < 1 or > 600) throw new ArgumentOutOfRangeException(nameof(timeout));
         var repositoryId = values.TryGetValue("--repository-id", out var idText) ? int.Parse(idText) : (int?)null;
         if (repositoryId is <= 0) throw new ArgumentOutOfRangeException(nameof(repositoryId));
         return new Arguments(values.GetValueOrDefault("--base-url", "http://127.0.0.1:5000"),
-            values.GetValueOrDefault("--fixture", "evaluation/day14-tasktrail.json"),
-            values.GetValueOrDefault("--report", "evaluation/day14-report.md"), timeout,
-            repositoryId);
+            values.GetValueOrDefault("--fixture", agents ? "evaluation/agents-tasktrail.json" : "evaluation/day14-tasktrail.json"),
+            values.GetValueOrDefault("--report", agents ? "evaluation/agents-report.md" : "evaluation/day14-report.md"), timeout,
+            repositoryId, mode);
     }
 }
