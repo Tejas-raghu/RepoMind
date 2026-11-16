@@ -14,8 +14,14 @@ public sealed class RepositoryUploadService(
         if (source.Files.Count == 0)
             throw new InvalidDataException("ZIP has no supported, safe, nonempty source files.");
 
+        var redactions = 0;
         var chunks = source.Files
-            .SelectMany(file => CodeChunker.Chunk(file.Path, file.Content))
+            .SelectMany(file =>
+            {
+                var redacted = SecretRedactor.Redact(file.Content);
+                redactions += redacted.Redactions;
+                return CodeChunker.Chunk(file.Path, redacted.Content);
+            })
             .ToArray();
         // Overlapping windows and similar files may contain identical text.
         // Embed each distinct text once, then store every source chunk.
@@ -45,6 +51,17 @@ public sealed class RepositoryUploadService(
         }
         var column = EmbeddingCompatibility.Column(profile.Model, profile.Dimensions);
 
+        var repositoryId = await PersistAsync(Path.GetFileNameWithoutExtension(fileName), profile,
+            column, chunks, embeddingsByText, cancellationToken);
+        return new RepositoryUploadResponse(repositoryId, "completed", source.Files.Count,
+            chunks.Length, source.FilesSkipped) { SecretsRedacted = redactions };
+    }
+
+    // One transaction: a failure on any chunk leaves no repository row behind.
+    internal async Task<long> PersistAsync(string name, EmbeddingResponse profile, string column,
+        IReadOnlyList<CodeChunk> chunks, IReadOnlyDictionary<string, EmbeddingResponse> embeddingsByText,
+        CancellationToken cancellationToken)
+    {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         long repositoryId;
@@ -53,7 +70,7 @@ public sealed class RepositoryUploadService(
             "VALUES ($1, 'completed', $2, $3) RETURNING id",
             connection, transaction))
         {
-            command.Parameters.AddWithValue(Path.GetFileNameWithoutExtension(fileName));
+            command.Parameters.AddWithValue(name);
             command.Parameters.AddWithValue(profile.Provider);
             command.Parameters.AddWithValue(profile.Model);
             repositoryId = (long)(await command.ExecuteScalarAsync(cancellationToken)
@@ -78,7 +95,6 @@ public sealed class RepositoryUploadService(
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return new RepositoryUploadResponse(repositoryId, "completed", source.Files.Count,
-            chunks.Length, source.FilesSkipped);
+        return repositoryId;
     }
 }

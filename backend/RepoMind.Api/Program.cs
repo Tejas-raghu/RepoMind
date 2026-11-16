@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using Npgsql;
 using Pgvector.Npgsql;
+using RepoMind.Api.Agents;
 using RepoMind.Api.Contracts;
 using RepoMind.Api.Services;
 
@@ -25,6 +26,7 @@ if (aiProvider == "cloudflare")
     builder.Services.AddScoped<ILlmService, CloudflareLlmService>();
     builder.Services.AddScoped<IEvidenceVerificationService, CloudflareEvidenceVerificationService>();
     builder.Services.AddScoped<IRerankingService, CloudflareRerankingService>();
+    builder.Services.AddScoped<IAgentModel, CloudflareAgentModel>();
 }
 else if (aiProvider == "ollama")
 {
@@ -62,6 +64,13 @@ else if (aiProvider == "ollama")
             throw new InvalidOperationException("EvidenceVerification:TimeoutSeconds must be between 1 and 180.");
         client.Timeout = TimeSpan.FromSeconds(seconds);
     });
+    builder.Services.AddHttpClient<IAgentModel, OllamaAgentModel>(client =>
+    {
+        client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"]
+            ?? throw new InvalidOperationException("Ollama:BaseUrl is required."));
+        // Planner and synthesis apply their own shorter timeouts; this is the ceiling.
+        client.Timeout = TimeSpan.FromSeconds(AgentOptions.From(builder.Configuration).ModelTimeoutSeconds + 5);
+    });
 }
 else throw new InvalidOperationException("Ai:Provider must be ollama or cloudflare.");
 builder.Services.AddSingleton(_ =>
@@ -84,6 +93,12 @@ builder.Services.AddScoped<RagEvidenceVerifier>();
 builder.Services.AddScoped<IRagEvidenceVerifier>(provider => provider.GetRequiredService<RagEvidenceVerifier>());
 builder.Services.AddScoped<IRagAnswerService, RagAnswerService>();
 builder.Services.AddSingleton<RagGenerationPromptBuilder>();
+builder.Services.AddScoped<AgentToolbox>();
+builder.Services.AddScoped<RetrievalAgent>();
+builder.Services.AddScoped<CodeAnalysisAgent>();
+builder.Services.AddScoped<ReviewAgent>();
+builder.Services.AddScoped<AgentRunStore>();
+builder.Services.AddScoped<AgentSupervisor>();
 
 var app = builder.Build();
 app.Use(async (context, next) =>
@@ -100,6 +115,18 @@ app.Use(async (context, next) =>
         context.Response.StatusCode = 409;
         await Results.Problem(exception.Message, statusCode: 409).ExecuteAsync(context);
     }
+});
+
+app.MapGet("/api/system/info", (IConfiguration configuration) =>
+{
+    var cloudflare = configuration["Ai:Provider"] == "cloudflare";
+    return Results.Ok(new SystemInfoResponse(
+        cloudflare ? "cloudflare" : "ollama",
+        cloudflare ? CloudflareEmbeddingService.Model : configuration["Ollama:EmbeddingModel"] ?? "",
+        cloudflare ? CloudflareLlmService.Model : configuration["Ollama:ChatModel"] ?? "",
+        configuration.GetValue<bool>("Reranking:Enabled") &&
+            (!cloudflare || configuration.GetValue<bool>("Cloudflare:RerankingEnabled")),
+        AgentOptions.From(configuration).ModelPlanning));
 });
 
 app.MapPost("/api/llm/chat", async (
@@ -631,4 +658,79 @@ app.MapPost("/api/repositories/{repositoryId}/rag/answer", async (
     }
 });
 
+app.MapPost("/api/repositories/{repositoryId}/agents/run", async (
+    string repositoryId,
+    AgentRunRequest request,
+    AgentSupervisor supervisor,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var parsedRepositoryId))
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["repositoryId"] = ["Repository ID must be a positive integer."]
+        });
+    var errors = request.Validate(parsedRepositoryId);
+    if (errors.Count > 0) return Results.ValidationProblem(errors);
+
+    try
+    {
+        var response = await supervisor.RunAsync(parsedRepositoryId, request.Task!.Trim(), cancellationToken);
+        return response is null
+            ? Results.Problem("Repository not found.", statusCode: 404)
+            : Results.Ok(response);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Agent run could not reach PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or the Day 6 tables are missing.", statusCode: 503);
+    }
+});
+
+app.MapGet("/api/repositories/{repositoryId}/agents/runs", async (
+    string repositoryId, int? limit, RepositorySourceService sources, AgentRunStore store,
+    ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var id) || id <= 0)
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        { ["repositoryId"] = ["Repository ID must be a positive integer."] });
+    try
+    {
+        return await sources.ExistsAsync(id, cancellationToken)
+            ? Results.Ok(await store.ListAsync(id, limit ?? 20, cancellationToken))
+            : Results.Problem("Repository not found.", statusCode: 404);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Agent run history could not be loaded from PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or database/015_agent_runs.sql is not applied.", statusCode: 503);
+    }
+});
+
+app.MapGet("/api/repositories/{repositoryId}/agents/runs/{runId}", async (
+    string repositoryId, string runId, AgentRunStore store, ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!long.TryParse(repositoryId, out var id) || id <= 0 || !long.TryParse(runId, out var run) || run <= 0)
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        { ["runId"] = ["Repository and run IDs must be positive integers."] });
+    try
+    {
+        var response = await store.GetAsync(id, run, cancellationToken);
+        return response is null ? Results.Problem("Agent run not found.", statusCode: 404) : Results.Ok(response);
+    }
+    catch (NpgsqlException)
+    {
+        logger.LogWarning("Agent run could not be loaded from PostgreSQL.");
+        return Results.Problem("PostgreSQL is unavailable or database/015_agent_runs.sql is not applied.", statusCode: 503);
+    }
+    catch (JsonException)
+    {
+        return Results.Problem("Stored agent run is invalid.", statusCode: 409);
+    }
+});
+
 app.Run();
+
+// Exposes the implicit Program class to WebApplicationFactory in API integration tests.
+public partial class Program;

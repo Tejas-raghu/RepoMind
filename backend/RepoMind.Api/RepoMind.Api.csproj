@@ -6,6 +6,9 @@
     <UserSecretsId>7c4e7579-b67b-4612-9c04-d1a0a0d51d3d</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="RepoMind.Api.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Pgvector" Version="0.3.2" />
   </ItemGroup>
 </Project>

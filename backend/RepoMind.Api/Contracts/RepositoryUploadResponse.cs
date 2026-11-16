@@ -1,4 +1,7 @@
 namespace RepoMind.Api.Contracts;
 
 public sealed record RepositoryUploadResponse(
-    long RepositoryId, string Status, int FilesIndexed, int ChunksCreated, int FilesSkipped);
+    long RepositoryId, string Status, int FilesIndexed, int ChunksCreated, int FilesSkipped)
+{
+    public int SecretsRedacted { get; init; }
+}

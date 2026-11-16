@@ -37,10 +37,12 @@ public sealed class OllamaLlmService(HttpClient httpClient, IConfiguration confi
         var schema = new
         {
             type = "object",
+            // Length caps let the constrained decoder close each string before
+            // num_predict runs out; uncapped prose was truncated into invalid JSON.
             properties = new
             {
-                summary = new { type = "string" },
-                explanation = new { type = "string" },
+                summary = new { type = "string", maxLength = 400 },
+                explanation = new { type = "string", maxLength = 900 },
                 citationChunkIds = new { type = "array", minItems = 1, uniqueItems = true,
                     items = new { type = "integer", @enum = sourceIds } }
             },
