@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import AgentPanel from './components/AgentPanel.vue'
 import AnswerPanel from './components/AnswerPanel.vue'
 import CodeViewer from './components/CodeViewer.vue'
 import RepositoryFileTree from './components/RepositoryFileTree.vue'
 import RepositoryPanel from './components/RepositoryPanel.vue'
-import { askRepository, getIndexedFile, listIndexedFiles, listRepositories, uploadRepository } from './services/repomindApi'
-import type { AnswerSource, IndexedFile, IndexedFileContent, RagAnswerResponse, RepositorySummary, RepositoryUploadResponse } from './types/api'
+import {
+  askRepository, getAgentRun, getIndexedFile, getSystemInfo, listAgentRuns, listIndexedFiles,
+  listRepositories, runAgent, uploadRepository,
+} from './services/repomindApi'
+import type {
+  AgentCitation, AgentRunResponse, AgentRunSummary, AnswerSource, IndexedFile, IndexedFileContent,
+  RagAnswerResponse, RepositorySummary, RepositoryUploadResponse, SystemInfo,
+} from './types/api'
 
 const repositories = ref<RepositorySummary[]>([])
 const selectedId = ref<number | null>(null)
@@ -27,6 +34,13 @@ const fileLoading = ref(false)
 const fileError = ref('')
 const citation = ref<{ startLine: number; endLine: number } | null>(null)
 const explorer = ref<HTMLElement | null>(null)
+const systemInfo = ref<SystemInfo | null>(null)
+const agentRun = ref<AgentRunResponse | null>(null)
+const agentError = ref('')
+const agentBusy = ref(false)
+const agentElapsed = ref(0)
+const agentHistory = ref<AgentRunSummary[]>([])
+const agentHistoryError = ref('')
 
 const selectedRepository = computed(() => repositories.value.find((item) => item.id === selectedId.value))
 let listController: AbortController | null = null
@@ -35,6 +49,9 @@ let answerController: AbortController | null = null
 let filesController: AbortController | null = null
 let fileController: AbortController | null = null
 let timer: ReturnType<typeof setInterval> | null = null
+let agentController: AbortController | null = null
+let historyController: AbortController | null = null
+let agentTimer: ReturnType<typeof setInterval> | null = null
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : 'An unexpected error occurred.'
@@ -101,9 +118,15 @@ function cancelAnswer() {
 function selectRepository(id: number | null) {
   if (id === selectedId.value) return
   cancelAnswer()
+  cancelAgent()
+  historyController?.abort()
   selectedId.value = id
   answer.value = null
   answerError.value = ''
+  agentRun.value = null
+  agentError.value = ''
+  agentHistory.value = []
+  agentHistoryError.value = ''
   filesController?.abort()
   fileController?.abort()
   files.value = []
@@ -114,7 +137,10 @@ function selectRepository(id: number | null) {
   citation.value = null
   filesLoading.value = false
   fileLoading.value = false
-  if (id !== null) void loadFiles(id)
+  if (id !== null) {
+    void loadFiles(id)
+    void loadAgentHistory(id)
+  }
 }
 
 async function loadFiles(id: number) {
@@ -153,9 +179,75 @@ async function openFile(path: string, range: { startLine: number; endLine: numbe
   }
 }
 
-function navigateSource(source: AnswerSource) {
+function navigateSource(source: AnswerSource | AgentCitation) {
   void openFile(source.filePath, { startLine: source.startLine, endLine: source.endLine })
   explorer.value?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+}
+
+function stopAgentTimer() {
+  if (agentTimer !== null) clearInterval(agentTimer)
+  agentTimer = null
+}
+
+function cancelAgent() {
+  agentController?.abort()
+  agentController = null
+  agentBusy.value = false
+  stopAgentTimer()
+}
+
+async function loadAgentHistory(id: number) {
+  historyController?.abort()
+  const controller = new AbortController()
+  historyController = controller
+  try {
+    const result = await listAgentRuns(id, controller.signal)
+    if (historyController === controller && selectedId.value === id) {
+      agentHistory.value = result
+      agentHistoryError.value = ''
+    }
+  } catch (error) {
+    if (!controller.signal.aborted && historyController === controller) agentHistoryError.value = message(error)
+  } finally {
+    if (historyController === controller) historyController = null
+  }
+}
+
+// Agent runs and history loads share one controller: the latest request wins.
+async function startAgent(load: (id: number, signal: AbortSignal) => Promise<AgentRunResponse>) {
+  if (agentBusy.value || selectedId.value === null) return
+  const id = selectedId.value
+  const controller = new AbortController()
+  agentController = controller
+  agentBusy.value = true
+  agentRun.value = null
+  agentError.value = ''
+  agentElapsed.value = 0
+  agentTimer = setInterval(() => agentElapsed.value++, 1000)
+  try {
+    const result = await load(id, controller.signal)
+    if (agentController === controller && selectedId.value === id) agentRun.value = result
+  } catch (error) {
+    if (!controller.signal.aborted && agentController === controller) agentError.value = message(error)
+  } finally {
+    if (agentController === controller) {
+      agentController = null
+      agentBusy.value = false
+      stopAgentTimer()
+      if (selectedId.value === id) void loadAgentHistory(id)
+    }
+  }
+}
+
+const runAgents = (task: string) => startAgent((id, signal) => runAgent(id, task, signal))
+const openAgentRun = (runId: number) => startAgent((id, signal) => getAgentRun(id, runId, signal))
+
+async function loadSystemInfo() {
+  try {
+    systemInfo.value = await getSystemInfo()
+  } catch {
+    systemInfo.value = null
+  }
 }
 
 async function ask(question: string) {
@@ -181,11 +273,16 @@ async function ask(question: string) {
   }
 }
 
-onMounted(refreshRepositories)
+onMounted(() => {
+  void refreshRepositories()
+  void loadSystemInfo()
+})
 onBeforeUnmount(() => {
   listController?.abort()
   uploadController?.abort()
   cancelAnswer()
+  cancelAgent()
+  historyController?.abort()
   filesController?.abort()
   fileController?.abort()
 })
@@ -215,7 +312,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="dashboard-grid">
-        <RepositoryPanel :repositories="repositories" :selected-id="selectedId"
+        <RepositoryPanel :repositories="repositories" :selected-id="selectedId" :system-info="systemInfo"
           :loading="listLoading" :list-error="listError" :uploading="uploading"
           :upload-error="uploadError" :upload-result="uploadResult"
           @refresh="refreshRepositories" @select="selectRepository" @upload="upload" />
@@ -223,6 +320,10 @@ onBeforeUnmount(() => {
           :elapsed-seconds="elapsedSeconds" :answer="answer" :error="answerError"
           @ask="ask" @cancel="cancelAnswer" @navigate="navigateSource" />
       </div>
+      <AgentPanel :repository-name="selectedRepository?.name ?? null" :busy="agentBusy"
+        :elapsed-seconds="agentElapsed" :run="agentRun" :error="agentError" :history="agentHistory"
+        :history-error="agentHistoryError" @run="runAgents" @cancel="cancelAgent" @open="openAgentRun"
+        @navigate="navigateSource" />
       <section ref="explorer" class="panel explorer-panel" aria-labelledby="explorer-title">
         <div class="panel-heading"><div class="eyebrow">03 / SOURCE</div>
           <h2 id="explorer-title">Code explorer</h2>

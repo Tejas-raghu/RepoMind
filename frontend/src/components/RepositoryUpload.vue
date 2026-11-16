@@ -65,6 +65,7 @@ defineExpose({ clearFile })
       <strong>Repository #{{ result.repositoryId }} indexed</strong>
       <span>{{ result.filesIndexed }} files · {{ result.chunksCreated }} chunks
         <template v-if="result.filesSkipped"> · {{ result.filesSkipped }} skipped</template>
+        <template v-if="result.secretsRedacted"> · {{ result.secretsRedacted }} secret value(s) redacted</template>
       </span>
     </div>
   </div>

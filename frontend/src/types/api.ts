@@ -1,6 +1,16 @@
 export interface RepositorySummary {
   id: number
   name: string
+  embeddingProvider?: string | null
+  embeddingModel?: string | null
+}
+
+export interface SystemInfo {
+  provider: string
+  embeddingModel: string
+  chatModel: string
+  rerankingEnabled: boolean
+  agentModelPlanning: boolean
 }
 
 export interface RepositoryUploadResponse {
@@ -9,6 +19,7 @@ export interface RepositoryUploadResponse {
   filesIndexed: number
   chunksCreated: number
   filesSkipped: number
+  secretsRedacted?: number
 }
 
 export type AnswerStatus =
@@ -53,4 +64,60 @@ export interface IndexedFileContent {
   coveredRanges: SourceRange[]
   gapRanges: SourceRange[]
   conflictRanges: SourceRange[]
+}
+
+export type AgentRoute = 'question' | 'analysis' | 'review' | 'unsupported'
+export type AgentStatus = 'completed' | 'partial' | 'abstained' | 'unsupported' | 'failed'
+
+export interface AgentCitation { filePath: string; startLine: number; endLine: number }
+export interface AgentFinding {
+  title: string
+  detail: string
+  severity: 'low' | 'medium' | 'high' | null
+  origin: 'model' | 'rule'
+  citations: AgentCitation[]
+  ruleId: string | null
+}
+export interface AgentEvidence {
+  id: string
+  filePath: string
+  startLine: number
+  endLine: number
+  content: string
+  source: string
+}
+export interface AgentPlanStep { step: number; agent: string; action: string; description: string }
+export interface AgentTraceStep {
+  step: number
+  agent: string
+  action: string
+  status: string
+  durationMs: number
+  detail: string
+}
+export interface AgentRunResponse {
+  runId: number | null
+  repositoryId: number
+  task: string
+  route: AgentRoute
+  routeReason: string
+  status: AgentStatus
+  summary: string
+  findings: AgentFinding[]
+  evidence: AgentEvidence[]
+  plan: AgentPlanStep[]
+  trace: AgentTraceStep[]
+  durationMs: number
+  model: string | null
+  answer: RagAnswerResponse | null
+  createdAt: string | null
+}
+export interface AgentRunSummary {
+  runId: number
+  task: string
+  route: AgentRoute
+  status: AgentStatus
+  summary: string
+  durationMs: number
+  createdAt: string
 }

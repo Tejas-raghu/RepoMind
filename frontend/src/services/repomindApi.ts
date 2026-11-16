@@ -1,4 +1,7 @@
-import type { IndexedFile, IndexedFileContent, RagAnswerResponse, RepositorySummary, RepositoryUploadResponse } from '../types/api'
+import type {
+  AgentRunResponse, AgentRunSummary, IndexedFile, IndexedFileContent, RagAnswerResponse,
+  RepositorySummary, RepositoryUploadResponse, SystemInfo,
+} from '../types/api'
 
 const baseUrl = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
@@ -81,15 +84,8 @@ export async function uploadRepository(file: File, signal?: AbortSignal): Promis
   return body as unknown as RepositoryUploadResponse
 }
 
-export async function askRepository(repositoryId: number, query: string, signal?: AbortSignal):
-  Promise<RagAnswerResponse> {
-  const body = await send(`/repositories/${repositoryId}/rag/answer`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, topK: 3 }),
-    signal,
-  })
-  if (!object(body) || typeof body.status !== 'string' || !answerStatuses.has(body.status) ||
+function validAnswer(body: unknown): body is RagAnswerResponse {
+  return !(!object(body) || typeof body.status !== 'string' || !answerStatuses.has(body.status) ||
     typeof body.answer !== 'string' ||
     !Array.isArray(body.sources) || !body.sources.every((source) => object(source) &&
       positiveId(source.chunkId) && typeof source.filePath === 'string' &&
@@ -102,8 +98,18 @@ export async function askRepository(repositoryId: number, query: string, signal?
     !optionalNumber(body.durationMs) || !optionalNumber(body.verifierDurationMs) ||
     (body.status === 'answered' && (body.sources.length === 0 || !body.answer.trim())) ||
     (body.status !== 'answered' && body.sources.length !== 0))
-    throw new ApiError('The API returned an unexpected answer.')
-  return body as unknown as RagAnswerResponse
+}
+
+export async function askRepository(repositoryId: number, query: string, signal?: AbortSignal):
+  Promise<RagAnswerResponse> {
+  const body = await send(`/repositories/${repositoryId}/rag/answer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, topK: 3 }),
+    signal,
+  })
+  if (!validAnswer(body)) throw new ApiError('The API returned an unexpected answer.')
+  return body
 }
 
 export async function listIndexedFiles(repositoryId: number, signal?: AbortSignal): Promise<IndexedFile[]> {
@@ -129,4 +135,80 @@ export async function getIndexedFile(repositoryId: number, path: string, signal?
     !Array.isArray(body.conflictRanges) || !body.conflictRanges.every(validRange))
     throw new ApiError('The API returned unexpected indexed source content.')
   return body as unknown as IndexedFileContent
+}
+
+export async function getSystemInfo(signal?: AbortSignal): Promise<SystemInfo> {
+  const body = await send('/system/info', { signal })
+  if (!object(body) || typeof body.provider !== 'string' || typeof body.embeddingModel !== 'string' ||
+    typeof body.chatModel !== 'string' || typeof body.rerankingEnabled !== 'boolean' ||
+    typeof body.agentModelPlanning !== 'boolean')
+    throw new ApiError('The API returned unexpected system information.')
+  return body as unknown as SystemInfo
+}
+
+const agentRoutes = new Set(['question', 'analysis', 'review', 'unsupported'])
+const agentStatuses = new Set(['completed', 'partial', 'abstained', 'unsupported', 'failed'])
+const severities = new Set(['low', 'medium', 'high', null])
+
+const validCitation = (value: unknown) => object(value) && typeof value.filePath === 'string' &&
+  value.filePath.length > 0 && positiveId(value.startLine) && positiveId(value.endLine) &&
+  value.endLine >= value.startLine
+
+// Paths, line ranges and statuses are checked before any agent result reaches the UI.
+function validAgentRun(body: unknown): body is AgentRunResponse {
+  return object(body) && (body.runId === null || positiveId(body.runId)) && positiveId(body.repositoryId) &&
+    typeof body.task === 'string' && agentRoutes.has(body.route as string) &&
+    agentStatuses.has(body.status as string) && typeof body.summary === 'string' &&
+    typeof body.routeReason === 'string' && optionalNumber(body.durationMs) && optionalString(body.model) &&
+    Array.isArray(body.findings) && body.findings.every((finding) => object(finding) &&
+      typeof finding.title === 'string' && typeof finding.detail === 'string' &&
+      severities.has(finding.severity as string | null) && (finding.origin === 'model' || finding.origin === 'rule') &&
+      Array.isArray(finding.citations) && finding.citations.every(validCitation) &&
+      (finding.ruleId === undefined || optionalString(finding.ruleId))) &&
+    Array.isArray(body.evidence) && body.evidence.every((item) => object(item) && typeof item.id === 'string' &&
+      validCitation(item) && typeof item.content === 'string' && typeof item.source === 'string') &&
+    Array.isArray(body.plan) && body.plan.every((step) => object(step) && positiveId(step.step) &&
+      typeof step.agent === 'string' && typeof step.action === 'string' && typeof step.description === 'string') &&
+    Array.isArray(body.trace) && body.trace.every((step) => object(step) && positiveId(step.step) &&
+      typeof step.agent === 'string' && typeof step.action === 'string' && typeof step.status === 'string' &&
+      optionalNumber(step.durationMs) && typeof step.detail === 'string') &&
+    (body.answer === null || body.answer === undefined || validAnswer(body.answer))
+}
+
+function normalizeRun(body: AgentRunResponse): AgentRunResponse {
+  return {
+    ...body,
+    answer: body.answer ?? null,
+    createdAt: body.createdAt ?? null,
+    findings: body.findings.map((finding) => ({ ...finding, ruleId: finding.ruleId ?? null })),
+  }
+}
+
+export async function runAgent(repositoryId: number, task: string, signal?: AbortSignal): Promise<AgentRunResponse> {
+  const body = await send(`/repositories/${repositoryId}/agents/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task }),
+    signal,
+  })
+  if (!validAgentRun(body) || body.repositoryId !== repositoryId)
+    throw new ApiError('The API returned an unexpected agent result.')
+  return normalizeRun(body)
+}
+
+export async function listAgentRuns(repositoryId: number, signal?: AbortSignal): Promise<AgentRunSummary[]> {
+  const body = await send(`/repositories/${repositoryId}/agents/runs`, { signal })
+  if (!Array.isArray(body) || !body.every((run) => object(run) && positiveId(run.runId) &&
+    typeof run.task === 'string' && agentRoutes.has(run.route as string) &&
+    agentStatuses.has(run.status as string) && typeof run.summary === 'string' &&
+    optionalNumber(run.durationMs) && typeof run.createdAt === 'string'))
+    throw new ApiError('The API returned an unexpected agent run history.')
+  return body as AgentRunSummary[]
+}
+
+export async function getAgentRun(repositoryId: number, runId: number, signal?: AbortSignal): Promise<AgentRunResponse> {
+  const body = await send(`/repositories/${repositoryId}/agents/runs/${runId}`, { signal })
+  if (!validAgentRun(body) || body.repositoryId !== repositoryId || body.runId !== runId)
+    throw new ApiError('The API returned an unexpected agent run.')
+  return normalizeRun(body)
 }
