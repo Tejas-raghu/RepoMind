@@ -1,5 +1,66 @@
 # RepoMind
 
+AI codebase intelligence that runs locally. Upload a repository ZIP, then:
+
+- **ask** questions and get answers grounded in retrieved code, with exact file
+  and line citations, or an explicit abstention when the evidence is not there;
+- **explore** the indexed source and jump from any citation to its lines;
+- **run agents**: a Supervisor routes each task to a Retrieval, Code Analysis or
+  Review Agent that uses allowlisted read-only tools, validates line citations,
+  and records a full execution trace.
+
+Stack: Vue 3 + TypeScript + Vite · ASP.NET Core (.NET 10) · PostgreSQL 17 +
+pgvector · Ollama (`embeddinggemma`, `qwen3:4b`). Cloudflare Workers AI is an
+optional, off-by-default provider. This is a 30-day learning and portfolio
+project for local, single-user use; it has no authentication.
+
+| Document | Contents |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Components, data model, API, configuration |
+| [docs/agents.md](docs/agents.md) | Multi-agent concepts: routing, planning, tools, state, recovery, tracing |
+| [docs/testing.md](docs/testing.md) | Test layers and commands, browser E2E, evaluation |
+| [docs/manual-sanity-checklist.md](docs/manual-sanity-checklist.md) | Step-by-step manual verification |
+| [docs/day14-5-cloudflare.md](docs/day14-5-cloudflare.md) | Optional Cloudflare provider |
+| [PROGRESS.md](PROGRESS.md) | Verified progress log with measured results |
+
+## Quick start (Windows PowerShell)
+
+Prerequisites: Docker Desktop, .NET 10 SDK, Node.js 20+, and Ollama with
+`ollama pull embeddinggemma` and `ollama pull qwen3:4b`.
+
+```powershell
+# 1. Database (fresh volumes run every migration automatically)
+docker compose up -d db
+# Existing volume from an earlier day: apply the agent-trace migration once (safe to repeat)
+Get-Content database/015_agent_runs.sql -Raw | docker compose exec -T db psql -U repomind -d repomind -v ON_ERROR_STOP=1
+
+# 2. API
+dotnet run --project backend/RepoMind.Api --no-launch-profile --urls http://localhost:5000
+
+# 3. UI (second terminal)
+cd frontend
+npm install
+npm run dev     # http://127.0.0.1:5173
+```
+
+Try it with the bundled sample:
+`Compress-Archive -Path evaluation/fixtures/TaskTrail -DestinationPath $env:TEMP\TaskTrail.zip -Force`,
+then upload the ZIP in the UI. Ask "Where is the Bearer token added to requests?"
+and run the agent task "Review src/router/guards.ts for security issues".
+
+## Tests
+
+```powershell
+dotnet test tests/RepoMind.Api.Tests/RepoMind.Api.Tests.csproj   # unit + PostgreSQL + HTTP integration
+cd frontend; npm test; npm run build                              # API contract, components, app, type check
+```
+
+See [docs/testing.md](docs/testing.md) for browser E2E and the evaluation harness.
+
+---
+
+# Development log
+
 Day 14.5 optional provider: [Cloudflare Workers AI setup and smoke test](docs/day14-5-cloudflare.md).
 
 ## Day 14: Basic RAG evaluation

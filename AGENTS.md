@@ -136,6 +136,14 @@ Generate grounded RAG answers with validated source citations via `POST /api/rep
 
 Known limitation: with reranking enabled, local latency makes verification time out; successful live answers were measured with reranking disabled.
 
+Days 11–14.5: Completed (answer quality, Vue dashboard, code explorer, evaluation and Hit@1 ranking, optional Cloudflare provider). See PROGRESS.md.
+
+Week 3 (Days 15–21), multi-agent system: Implemented and verified. It has a rule-based Supervisor/Router, a Retrieval Agent with a model planner and rule fallback, a Code Analysis Agent, a Review Agent, allowlisted read-only tools with budgets, validated line citations, recovery to deterministic output, persisted execution traces (`agent_runs`), a UI workspace, and an agent evaluation mode. See docs/agents.md.
+
+Week 4: Hybrid search and retrieval evaluation are done. Also done: a reproducible TaskTrail fixture, secret redaction during ingestion, HTTP/component/browser test layers, and documentation (docs/). Still open, manual: demo recording and the GitHub/LinkedIn presentation.
+
+Reranking is off by default; enable it with `Reranking__Enabled=true`.
+
 ## Important
 
 Implement only the current day's tasks unless explicitly instructed otherwise. Explain AI-related logic so the developer understands the implementation.

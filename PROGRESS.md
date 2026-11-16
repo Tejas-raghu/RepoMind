@@ -128,3 +128,82 @@
 - A live API using default Ollama returned `embeddinggemma` with 768 dimensions. With reranking disabled after the migration, `evaluation/day145-ollama-hit1.md` measured Hit@1 **5/5** and Hit@5 **5/5** on the original five labeled questions. A separate request with the local reranker enabled timed out at the client after 120 seconds. A later Bearer RAG request returned `generation_unavailable` after 123,492 ms, so it did not count as an answer.
 - Live Cloudflare embedding returned 1024 dimensions. A direct embedding store/search round trip found its own test row at cosine similarity 1; that row was then deleted. Chat returned content and token usage. A one-file synthetic ZIP uploaded as repository 581; its vector was stored in `embedding_cf` with provider/model metadata, and querying the old Ollama repository 38 in Cloudflare mode returned HTTP 409. The Bearer question retrieved the implementation first, verification returned `supported` with its stored chunk ID, and one RAG answer returned `answered` with one validated source citation. A Stripe RAG request returned `insufficient_evidence` with zero sources on one attempt and `verification_unavailable` on another; the latter is not a correct abstention.
 - A two-file synthetic ZIP uploaded as repository 582. Without reranking, the Bearer implementation ranked first (Hit@1 1/1). With a bounded retry for malformed structured output, the final Cloudflare-mode API answered the Bearer question using both retrieved chunks with one validated citation to `apiClient.ts` lines 1–6, 252 prompt tokens, 220 generated tokens, and 13,327 ms request wall time. The five Day 14 unsupported questions on this synthetic fixture returned `insufficient_evidence` with zero sources (**5/5 correct abstentions, 0/5 false acceptances**) in a completed run. An earlier run before the verifier retry had only 3/5 correct abstentions and two `verification_unavailable` results. Cloudflare BGE reranking applied successfully but ranked the descriptive README ahead of the code (Hit@1 0/1), so Cloudflare BGE is opt-in and off by default. Individual live observations are in `evaluation/day145-cloudflare-smoke-report.md`. The original twelve-file TaskTrail ZIP is not in this workspace; a Cloudflare Day 14 ten-question comparison was not run. No Cloudflare neuron total is claimed.
+
+## Week 3, Days 15–21 — multi-agent system (verified)
+
+- **Supervisor/Router** (`AgentSupervisor`, `AgentRouter`): rule-based routing to `question`, `analysis`, `review` or `unsupported`, with a readable reason; side-effect verbs (delete, deploy, refactor, write…) are refused because agents are read-only. File names resolve to indexed paths only when exactly one file matches. Each route writes an explicit plan returned in the response.
+- **Retrieval Agent**: location questions reuse the verified RAG answer flow unchanged. For analysis/review it searches with the directive verb removed ("Explain how overdue tasks…" → "how overdue tasks…"), asks the model planner to choose at most two allowed paths, and falls back to a rule plan on planner failure. The model cannot veto search results that literally contain the task's subject words; abstaining requires the model and the rules to agree.
+- **Code Analysis Agent** and **Review Agent**: deterministic tools first (`outline_file`, `static_checks`, 12 review rules), then a structured-JSON model step. Findings are kept only when their evidence ID exists and their line range lies inside the evidence actually read; paths come from evidence records. Model failure returns deterministic output as `partial`. A file the user named is always in scope.
+- **Controlled tool execution** (`AgentToolbox`): five allowlisted read-only tools; repository ID from the URL only; paths must be indexed files of that repository; 10 calls and 6,000 evidence characters per run; failures are recorded as `failed`, `timeout`, `rejected` or `skipped` trace steps instead of exceptions.
+- **State, tracing, persistence**: agents share a typed `AgentRunState`. Every step records agent, action, status, duration and a detail without source text. The additive, idempotent `database/015_agent_runs.sql` stores each run as JSONB; it was applied twice to the existing volume without touching the 518 Ollama and 3 Cloudflare vectors. New endpoints: `POST …/agents/run`, `GET …/agents/runs`, `GET …/agents/runs/{runId}` (repository-scoped).
+- **Structured model interface** `IAgentModel`: Ollama uses JSON Schema `format`; Cloudflare uses prompt instructions, wrapper stripping and one retry.
+- Live smoke tuning on repository 38 found and fixed three issues: (1) the review model set `sufficient=false` for a file with no issues; (2) keeping "Explain" in the search query defeated implementation-first ranking, so the planner read `TaskBoard.vue` instead of `taskService.ts`; (3) the model planner wrongly called `taskService.ts` and `AuthController.cs` unrelated. During evaluation a fourth issue appeared: the review model returned five valid findings and still set `sufficient=false`. Findings that pass validation are now kept, and a model abstains only with zero findings.
+- **UI**: "04 / Agents" workspace with example tasks, Ctrl+Enter, cancel, findings with severity/origin and citation buttons that open the explorer, evidence, plan and trace table, and a reopenable run history.
+
+## Week 4 — reliability, security, testing and evaluation (verified)
+
+- **Reproducible fixture:** `evaluation/fixtures/TaskTrail` (12 files) was rebuilt from repository 38's gap-free indexed coverage. A live upload created repository 843 with 12 files, 13 chunks and 0 skipped files in 12 s. PostgreSQL showed all chunks at 768 dimensions with provider/model metadata, and **0 chunks differing** in content from repository 38. Day 14 results can now be reproduced on a clean database.
+- **Secret redaction during ingestion** (`SecretRedactor`): AWS, GitHub, Slack, Stripe, OpenAI-style and Google keys, JWTs, quoted password/secret/API-key assignments, connection-string passwords and PEM private keys are replaced on the same line before chunking, so line numbers stay exact. Uploads report `secretsRedacted`, and the Review Agent flags redacted lines. Placeholders and ordinary code are left alone (unit tests).
+- **Reliability fixes from live runs:**
+  - `Reranking:Enabled` now defaults to `false`: every recorded local rerank timed out and caused verification to fail as well.
+  - `EvidenceVerification:TimeoutSeconds` raised from 60 to 120; the measured average was about 50 s.
+  - Grounded generation hit the 300-token output limit and returned truncated JSON (`generation_unavailable`). The schema now caps summary at 400 and explanation at 900 characters, and `RagGeneration:MaxOutputTokens` is 512. "How are protected routes secured?", which no recorded run had answered, then answered in 37 s with a `guards.ts` citation.
+- **API additions (all additive):** `GET /api/system/info`; `embeddingProvider`/`embeddingModel` on `GET /api/repositories`; `secretsRedacted` on upload. The UI shows the active provider and warns before a provider/model mismatch would return 409.
+- **Upload transaction** extracted to `PersistAsync`. An integration test proves that a failing chunk insert leaves no repository row; a cancelled upload stores nothing.
+- **Tests:**
+  - `dotnet test tests/RepoMind.Api.Tests/RepoMind.Api.Tests.csproj` passed **217/217** (141 before this phase). This covers unit tests, PostgreSQL integration (agent orchestration, tool isolation, budgets, recovery, persistence, cancellation, rollback, redaction) and HTTP integration through `WebApplicationFactory`. The HTTP tests use the real pipeline and PostgreSQL with only the AI providers faked; they cover upload traversal, unsupported, empty, broken and oversized ZIPs, invalid and unknown IDs, cross-repository isolation, RAG citations and abstention, agent endpoints and history scoping, and provider failures mapped to 502.
+  - Frontend `npm test` passed **5** Node API-contract tests and **14** Vitest component/app tests: upload validation, provider mismatch, answer rendering and escaping, citation navigation into the explorer, stale-answer discard on repository switch, agent run/history/navigation, and API-unavailable errors. `npm run build` passed.
+  - `npm audit --omit=dev` reports 0 vulnerabilities.
+- **RAG evaluation** (`evaluation/final-rag-report.md`, repository 843, reranking disabled), compared with the Day 14 baseline (`evaluation/day14-report.md`, repository 38, identical indexed content):
+
+| Metric | Day 14 | Final |
+|---|---|---|
+| Hit@1 | 2/5 | **5/5** |
+| Hit@5 | 5/5 | 5/5 |
+| Grounded supported answers | 3/5 | **5/5** |
+| Correct abstentions | 5/5 | 5/5 |
+| False acceptances | 0/5 | 0/5 |
+| Average answer time | 139,310 ms | **54,205 ms** |
+| Request failures | 0 | 0 |
+
+  The Hit@1 gain comes from the Day 14 follow-up ranking change. The answer gains come from the generation-budget and verifier-timeout fixes. Ten questions on one sample are a smoke test, not a reliability estimate.
+- **Agent evaluation** (`evaluation/final-agents-report.md`, ten labeled tasks in `evaluation/agents-tasktrail.json`, repository 843): route accuracy **10/10**; grounded tasks citing an expected file **5/5**, all completed with validated model findings and no fallback; abstentions on absent topics **2/2**; refusals of side-effect tasks **3/3**; **0** of 13 citations outside indexed line ranges; **10/10** runs reloaded from `agent_runs` with the same status and trace. Median request time was 56,022 ms; the maximum was 201,348 ms (two-file auth review). Earlier runs on intermediate builds are kept for transparency:
+  - `agents-report-before-sufficiency-fix.md`, 9/10: the auth review abstained despite five valid findings.
+  - `agents-report-intermediate.md`, 7/10: keeping findings everywhere let Stripe and Redis through, and the auth review timed out.
+  - `agents-report-intermediate-2.md`, 9/10: the auth review's JSON was cut off at 700 output tokens.
+
+  The fixes were: abstention rules that differ by agent, documentation-only matches no longer overriding the planner, whole-word singular matching ("redis" no longer matches "redirect"), shorter summary/detail caps, a 240 s model-step timeout, and a 1,000-token agent output budget. Ten tasks on one small sample are a smoke test.
+- **Browser end-to-end** (`frontend/tests/e2e`, Playwright with the installed Chrome, live Vite → API → PostgreSQL → Ollama, nothing mocked): **8/8 passed in 5.7 min**. The run covered:
+  - upload and index of the fixture ZIP (16.6 s)
+  - explorer navigation
+  - "Where is the Bearer token added?" answered with an `apiClient.ts` source card whose "Open in explorer" highlighted the cited lines (2.4 min)
+  - Stripe abstention with no source cards (1.4 min)
+  - instant refusal via Ctrl+Enter
+  - Review Agent run with trace and evidence → explorer (1.4 min)
+  - reopening a stored run from history
+  - no horizontal overflow at 390 px
+
+  This closes the browser checks left open on Days 12–13 that automation can cover (keyboard submission, citation scrolling, narrow layout). Visual polish is still in the manual checklist.
+- **Not verified in this phase:** live Cloudflare runs, because no Cloudflare credentials were used. Cloudflare agent output handling is unit-tested only; provider/model mismatch handling is covered by Day 14.5 live checks and the new UI tests. Also unverified: reranking-enabled behavior (off by default), and repositories larger than the small samples.
+- **Known limitations:**
+  - CPU latency of 30–200 s per model step.
+  - The keyword router can misroute casual uses of words like "issues".
+  - Review rules are text heuristics.
+  - A valid citation proves provenance, not every sentence of model prose.
+  - The model's relevance judgments vary between runs; the evaluation passes above come from single runs.
+  - Four moderate npm advisories affect dev-only test tooling (minimatch via @vue/test-utils → js-beautify). The patched releases are under two weeks old, so they weren't adopted; production dependencies audit clean.
+- **Manual items remaining for the developer:** visual review using `docs/manual-sanity-checklist.md`, demo recording, GitHub/LinkedIn presentation.
+
+## Cloudflare Workers AI — end-to-end verification (2026-11-14)
+
+- API run with `Ai__Provider=cloudflare` (embeddings `@cf/qwen/qwen3-embedding-0.6b`, chat `@cf/qwen/qwen3-30b-a3b-fp8`, reranking off). Credentials came from User Secrets and an environment variable only.
+- **Ingestion:** the TaskTrail fixture uploaded as repository 1246 in **6.4 s** (12 s locally): 13 chunks, all 1024-dimensional in `embedding_cf`, text identical to the local index. Querying the Ollama repository 843 in this mode returned **409**, as designed.
+- **RAG evaluation** (`evaluation/cloudflare-rag-report.md`): Hit@1 **5/5**, Hit@5 **5/5**, grounded answers **5/5**, correct abstentions **5/5**, false acceptances **0/5**. Average answer **6,085 ms** (local final: 54,205 ms); average retrieval 737 ms; no failures.
+- **Bug found and fixed in Cloudflare agent calls:**
+  - In the first agent run (`cloudflare-agents-report-before-nothink-fix.md`, 9/10), the planner fell back to rules in 4 of 4 runs and one review synthesis failed with "Invalid Cloudflare chat content".
+  - A direct probe showed Cloudflare's Qwen3 reasons before answering and counts that reasoning against `max_tokens`: the planner's 200-token budget was spent entirely on hidden reasoning (`finish_reason: length`, empty content).
+  - Adding Qwen3's `/no_think` switch fixed the planner (53 tokens), but turning reasoning off everywhere made reviews lazy: "no issues" in 34 tokens (`cloudflare-agents-report-nothink-everywhere.md`).
+  - **Final design:** `AgentModelRequest.AllowReasoning`. The planner uses `/no_think` with at least 1,200 tokens; review and explanation keep reasoning with at least 4,000 tokens. The Ollama path is unchanged. A unit test covers both request shapes; backend tests pass **218/218**.
+- **Agent evaluation** (`evaluation/cloudflare-agents-report.md`): routing **10/10**, grounded tasks **4/5**, abstentions **2/2**, refusals **3/3**, **0** of 8 citations out of range, **0** fallback/timeout/failed steps, 10/10 runs reloadable. Median **4,182 ms**, max 12,015 ms. The miss is the `guards.ts` review: the model reasoned (745 tokens) and reported no issues for the 16-line guard, a model judgment rather than a failure. The local model reported two minor findings there. The auth review found a real high-severity issue: a JWT stored in `localStorage` at `authService.ts:19`.
+- **Browser E2E** against the Cloudflare-mode API (`E2E_PROVIDER=cloudflare`): **8/8 passed in 27 s** (local: 5.7 min).
+- Quota (neuron) usage for the whole run was not totalled. One planner call measured 2–12 neurons in the probe.
