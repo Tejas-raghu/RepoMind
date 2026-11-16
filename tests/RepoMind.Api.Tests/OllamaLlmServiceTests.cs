@@ -31,6 +31,10 @@ public sealed class OllamaLlmServiceTests
         Assert.Contains("src/apiClient.ts", root.GetProperty("messages")[1].GetProperty("content").GetString());
         Assert.Equal(42, root.GetProperty("format").GetProperty("properties")
             .GetProperty("citationChunkIds").GetProperty("items").GetProperty("enum")[0].GetInt64());
+        // Length caps keep constrained output inside num_predict (uncapped prose was truncated JSON).
+        var properties = root.GetProperty("format").GetProperty("properties");
+        Assert.Equal(400, properties.GetProperty("summary").GetProperty("maxLength").GetInt32());
+        Assert.Equal(900, properties.GetProperty("explanation").GetProperty("maxLength").GetInt32());
     }
 
     [Theory]

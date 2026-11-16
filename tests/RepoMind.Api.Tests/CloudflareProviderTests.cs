@@ -172,6 +172,40 @@ public sealed class CloudflareProviderTests
     private static CloudflareAiClient Client(StubHandler handler) => new(
         new HttpClient(handler) { BaseAddress = new Uri("https://api.cloudflare.com/") }, Config());
 
+    [Fact]
+    public async Task Agent_model_disables_hidden_reasoning_and_keeps_a_safe_output_budget()
+    {
+        var handler = new StubHandler(_ => Reply(new { success = true, result = new
+        {
+            choices = new[] { new { message = new { content = "{\"reason\":\"r\",\"relevant\":true,\"paths\":[\"a.ts\"]}" } } },
+            usage = new { prompt_tokens = 139, completion_tokens = 53 }
+        } }));
+        var model = new RepoMind.Api.Agents.CloudflareAgentModel(Client(handler));
+
+        var result = await model.CompleteJsonAsync(new RepoMind.Api.Agents.AgentModelRequest(
+            "Plan.", "Task: review auth", new { }, "{...}", 200, 4096), CancellationToken.None);
+
+        Assert.True(result.Output.GetProperty("relevant").GetBoolean());
+        Assert.Equal((139, 53), (result.PromptTokens, result.GeneratedTokens));
+        using (var body = JsonDocument.Parse(handler.Body!))
+        {
+            Assert.EndsWith("/no_think", body.RootElement.GetProperty("messages")[1].GetProperty("content").GetString());
+            Assert.Equal(1200, body.RootElement.GetProperty("max_tokens").GetInt32());
+        }
+
+        // Review and explanation keep reasoning, with room for thinking plus the JSON answer.
+        await model.CompleteJsonAsync(new RepoMind.Api.Agents.AgentModelRequest(
+            "Review.", "Evidence", new { }, "{...}", 1000, 6144, AllowReasoning: true), CancellationToken.None);
+        using var reasoning = JsonDocument.Parse(handler.Body!);
+        Assert.DoesNotContain("/no_think", reasoning.RootElement.GetProperty("messages")[1].GetProperty("content").GetString());
+        Assert.Equal(4000, reasoning.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.True(RepoMind.Api.Agents.AgentSynthesis.Request("s", "u",
+            [new AgentEvidence("E1", "a.ts", 1, 2, "x", "read_file")], true,
+            RepoMind.Api.Agents.AgentOptions.From(new ConfigurationBuilder().Build())).AllowReasoning);
+        Assert.False(RepoMind.Api.Agents.RetrievalAgent.PlannerRequest("t", RepoMind.Api.Agents.AgentRoute.Review,
+            [], ["a.ts"]).AllowReasoning);
+    }
+
     private static IConfiguration Config() => new ConfigurationBuilder().AddInMemoryCollection(
         new Dictionary<string, string?>
         {
