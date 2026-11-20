@@ -226,3 +226,14 @@
   - **Browser E2E:** 8/8 in 2.1 min.
   - The Qwen3 reports are kept as `*-qwen3-retired.md`.
 - **Environment note:** one earlier agent run in this session failed with HTTP 503. The PostgreSQL log showed a Docker disk sync taking 323 s, which stalled every database call. Re-running after the database recovered gave the results above. The RAG run overlapped that stall: its one 28.7 s answer (AWS S3, still a correct abstention) was slowed by it, so the average answer time in that report is inflated. Ignoring that answer, answers took 1.4–10.2 s.
+
+## One Ask box (2026-11-20)
+
+- Merged the separate "Ask RepoMind" and "Multi-agent workspace" panels into one **"02 / Ask RepoMind"** box. Every question or task goes to `POST …/agents/run`. The Supervisor already routes "where/how" questions to the unchanged verified RAG flow, and explain/review tasks to their agents, so users no longer need to pick a box. Before the merge, typing a review into the old Ask box usually produced "Insufficient evidence", because the verifier looks for code that performs the request.
+- Question results keep the original look: answer status ("Answer ready", "Insufficient evidence", …), answer text, and source cards with "Open in explorer". They now also get a trace and a history entry. Explain/review results show findings as before.
+- `AnswerPanel.vue` and `QuestionPanel.vue` removed. The backend is unchanged; `/rag/answer` stays for the API and the evaluator.
+- Verified:
+  - `npm run build` passed; `npm test`: 5 API-contract and 14 component/app tests passed.
+  - The app test asserts that the UI calls only `/agents/run`.
+  - Browser E2E against a Cloudflare-mode API: **8/8 passed in 41.5 s**. The history now lists all four runs, questions included.
+- Tooling note: Vitest on Windows failed with "failed to find the runner" when started from a lowercase `c:\` working directory, because two copies of its module were loaded. Running from `C:\` fixed it; the tests were not the problem.

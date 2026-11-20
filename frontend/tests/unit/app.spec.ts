@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../src/App.vue'
-import { answered, fileContent, reviewRun } from './fixtures'
+import { fileContent, questionRun, reviewRun } from './fixtures'
 
 // Syntax highlighting is covered by the browser E2E run; plain escaped text is enough here.
 vi.mock('../../src/services/sourceHighlight', () => ({ highlightSource: async () => null }))
@@ -26,8 +26,9 @@ function backend(overrides: Record<string, Handler> = {}) {
     'GET /api/repositories/38/agents/runs': () => [],
     'GET /api/repositories/40/agents/runs': () => [],
     'GET /api/repositories/38/files/content': () => fileContent,
-    'POST /api/repositories/38/rag/answer': () => answered,
-    'POST /api/repositories/38/agents/run': () => reviewRun,
+    // The single ask box always calls the Supervisor; it routes questions to RAG itself.
+    'POST /api/repositories/38/agents/run': (_url, init) =>
+      String(init?.body).includes('Review') ? reviewRun : questionRun,
     ...overrides,
   }
   vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
@@ -77,6 +78,9 @@ describe('App', () => {
     await wrapper.find('.question-form').trigger('submit')
     await flushPromises()
     expect(wrapper.text()).toContain('The client sets the header.')
+    expect(wrapper.find('[data-testid="agent-status"]').text()).toContain('Answer ready')
+    expect(calls).toContain('POST /api/repositories/38/agents/run')
+    expect(calls.some((call) => call.includes('/rag/answer'))).toBe(false)
 
     await wrapper.findAll('button').find((b) => b.text() === 'Open in explorer')!.trigger('click')
     await flushPromises()
@@ -90,7 +94,7 @@ describe('App', () => {
 
   it('discards a slow answer after the repository changes', async () => {
     let release: (value: unknown) => void = () => {}
-    backend({ 'POST /api/repositories/38/rag/answer': () => new Promise((resolve) => { release = resolve }) })
+    backend({ 'POST /api/repositories/38/agents/run': () => new Promise((resolve) => { release = resolve }) })
     const wrapper = await mountApp()
     await select(wrapper, '38')
     await wrapper.find('#question').setValue('Where is the Bearer token added?')
@@ -99,14 +103,14 @@ describe('App', () => {
     expect(wrapper.text()).toContain('Thinking')
 
     await select(wrapper, '40')
-    release(json(answered))
+    release(json(questionRun))
     await flushPromises()
     expect(wrapper.text()).not.toContain('The client sets the header.')
     expect(wrapper.find('.context-chip').text()).toContain('Other')
     wrapper.unmount()
   })
 
-  it('runs agents, refreshes history and navigates from a finding', async () => {
+  it('runs a review through the same box, refreshes history and navigates from a finding', async () => {
     let history: unknown[] = []
     backend({ 'GET /api/repositories/38/agents/runs': () => history,
       'POST /api/repositories/38/agents/run': () => { history = [{ runId: 7, task: reviewRun.task, route: 'review',
@@ -114,8 +118,8 @@ describe('App', () => {
         return reviewRun } })
     const wrapper = await mountApp()
     await select(wrapper, '38')
-    await wrapper.find('#agent-task').setValue('Review apiClient.ts')
-    await wrapper.find('.agent-panel form').trigger('submit')
+    await wrapper.find('#question').setValue('Review apiClient.ts')
+    await wrapper.find('.question-form').trigger('submit')
     await flushPromises()
     expect(wrapper.find('[data-testid="agent-summary"]').text()).toBe('Token storage is risky.')
     expect(wrapper.find('.history-task').text()).toBe('Review apiClient.ts')
@@ -137,10 +141,10 @@ describe('App', () => {
     backend({ 'POST /api/repositories/38/agents/run': () => json({ detail: 'Task must not be empty.' }, 400) })
     const wrapper = await mountApp()
     await select(wrapper, '38')
-    await wrapper.find('#agent-task').setValue('x')
-    await wrapper.find('.agent-panel form').trigger('submit')
+    await wrapper.find('#question').setValue('x')
+    await wrapper.find('.question-form').trigger('submit')
     await flushPromises()
-    expect(wrapper.find('.agent-panel [role="alert"]').text()).toBe('Task must not be empty.')
+    expect(wrapper.find('.answer-panel [role="alert"]').text()).toBe('Task must not be empty.')
     wrapper.unmount()
   })
 })

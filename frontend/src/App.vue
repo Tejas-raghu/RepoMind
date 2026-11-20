@@ -1,17 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import AgentPanel from './components/AgentPanel.vue'
-import AnswerPanel from './components/AnswerPanel.vue'
 import CodeViewer from './components/CodeViewer.vue'
 import RepositoryFileTree from './components/RepositoryFileTree.vue'
 import RepositoryPanel from './components/RepositoryPanel.vue'
 import {
-  askRepository, getAgentRun, getIndexedFile, getSystemInfo, listAgentRuns, listIndexedFiles,
+  getAgentRun, getIndexedFile, getSystemInfo, listAgentRuns, listIndexedFiles,
   listRepositories, runAgent, uploadRepository,
 } from './services/repomindApi'
 import type {
   AgentCitation, AgentRunResponse, AgentRunSummary, AnswerSource, IndexedFile, IndexedFileContent,
-  RagAnswerResponse, RepositorySummary, RepositoryUploadResponse, SystemInfo,
+  RepositorySummary, RepositoryUploadResponse, SystemInfo,
 } from './types/api'
 
 const repositories = ref<RepositorySummary[]>([])
@@ -21,10 +20,6 @@ const listError = ref('')
 const uploading = ref(false)
 const uploadError = ref('')
 const uploadResult = ref<RepositoryUploadResponse | null>(null)
-const answer = ref<RagAnswerResponse | null>(null)
-const answerError = ref('')
-const asking = ref(false)
-const elapsedSeconds = ref(0)
 const files = ref<IndexedFile[]>([])
 const filesLoading = ref(false)
 const filesError = ref('')
@@ -45,10 +40,8 @@ const agentHistoryError = ref('')
 const selectedRepository = computed(() => repositories.value.find((item) => item.id === selectedId.value))
 let listController: AbortController | null = null
 let uploadController: AbortController | null = null
-let answerController: AbortController | null = null
 let filesController: AbortController | null = null
 let fileController: AbortController | null = null
-let timer: ReturnType<typeof setInterval> | null = null
 let agentController: AbortController | null = null
 let historyController: AbortController | null = null
 let agentTimer: ReturnType<typeof setInterval> | null = null
@@ -103,26 +96,11 @@ async function upload(file: File) {
   }
 }
 
-function stopTimer() {
-  if (timer !== null) clearInterval(timer)
-  timer = null
-}
-
-function cancelAnswer() {
-  answerController?.abort()
-  answerController = null
-  asking.value = false
-  stopTimer()
-}
-
 function selectRepository(id: number | null) {
   if (id === selectedId.value) return
-  cancelAnswer()
   cancelAgent()
   historyController?.abort()
   selectedId.value = id
-  answer.value = null
-  answerError.value = ''
   agentRun.value = null
   agentError.value = ''
   agentHistory.value = []
@@ -250,29 +228,6 @@ async function loadSystemInfo() {
   }
 }
 
-async function ask(question: string) {
-  if (asking.value || selectedId.value === null) return
-  const controller = new AbortController()
-  answerController = controller
-  asking.value = true
-  answer.value = null
-  answerError.value = ''
-  elapsedSeconds.value = 0
-  timer = setInterval(() => elapsedSeconds.value++, 1000)
-  try {
-    const result = await askRepository(selectedId.value, question, controller.signal)
-    if (answerController === controller) answer.value = result
-  } catch (error) {
-    if (!controller.signal.aborted) answerError.value = message(error)
-  } finally {
-    if (answerController === controller) {
-      answerController = null
-      asking.value = false
-      stopTimer()
-    }
-  }
-}
-
 onMounted(() => {
   void refreshRepositories()
   void loadSystemInfo()
@@ -280,7 +235,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   listController?.abort()
   uploadController?.abort()
-  cancelAnswer()
   cancelAgent()
   historyController?.abort()
   filesController?.abort()
@@ -316,14 +270,12 @@ onBeforeUnmount(() => {
           :loading="listLoading" :list-error="listError" :uploading="uploading"
           :upload-error="uploadError" :upload-result="uploadResult"
           @refresh="refreshRepositories" @select="selectRepository" @upload="upload" />
-        <AnswerPanel :repository-name="selectedRepository?.name ?? null" :busy="asking"
-          :elapsed-seconds="elapsedSeconds" :answer="answer" :error="answerError"
-          @ask="ask" @cancel="cancelAnswer" @navigate="navigateSource" />
+        <!-- One box: the Supervisor routes questions to RAG and explain/review tasks to agents. -->
+        <AgentPanel :repository-name="selectedRepository?.name ?? null" :busy="agentBusy"
+          :elapsed-seconds="agentElapsed" :run="agentRun" :error="agentError" :history="agentHistory"
+          :history-error="agentHistoryError" @run="runAgents" @cancel="cancelAgent" @open="openAgentRun"
+          @navigate="navigateSource" />
       </div>
-      <AgentPanel :repository-name="selectedRepository?.name ?? null" :busy="agentBusy"
-        :elapsed-seconds="agentElapsed" :run="agentRun" :error="agentError" :history="agentHistory"
-        :history-error="agentHistoryError" @run="runAgents" @cancel="cancelAgent" @open="openAgentRun"
-        @navigate="navigateSource" />
       <section ref="explorer" class="panel explorer-panel" aria-labelledby="explorer-title">
         <div class="panel-heading"><div class="eyebrow">03 / SOURCE</div>
           <h2 id="explorer-title">Code explorer</h2>

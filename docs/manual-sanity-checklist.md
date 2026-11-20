@@ -28,7 +28,9 @@ Use a fresh terminal for each service. Tick each item. Local model steps take
 - [ ] Open `guards.ts` → line numbers, syntax highlighting, "Copy code" and "Copy path" work.
 - [ ] Keyboard: Tab reaches tree items and buttons; focus outlines are visible.
 
-## 3. Questions (RAG)
+## 3. Questions (one Ask box)
+
+Everything, questions and agent tasks alike, is typed into the single **"02 / Ask RepoMind"** box.
 
 - [ ] "Where is the Bearer token added to requests?" → "Answer ready", with a source `apiClient.ts`.
 - [ ] Expand the source card → code is shown as text. "Open in explorer" scrolls down and highlights the cited lines.
@@ -37,15 +39,15 @@ Use a fresh terminal for each service. Tick each item. Local model steps take
 - [ ] Start a question, then switch repository → the old answer never appears.
 - [ ] "How are protected routes secured?" → note the outcome. The verifier has abstained on this one before; record whether it answers.
 
-## 4. Multi-agent workspace
+## 4. Explain and review tasks (same box)
 
 - [ ] "Delete the AuthController file" (Ctrl+Enter) → "Not supported" within a second, with a read-only explanation.
 - [ ] "Review src/router/guards.ts for security issues" → Review Agent, Completed or Partial. Open "Plan and execution trace": `read_file`, `static_checks`, `synthesize`.
 - [ ] "Explain what apiClient.ts does" → Code Analysis Agent; findings carry citation buttons. Clicking one opens the explorer at that line.
 - [ ] "Explain how overdue tasks are identified" (no file named) → the trace shows `search_code` and `plan_targets`; evidence comes from `taskService.ts`.
 - [ ] "Explain the Stripe payment integration" → Abstained, no findings.
-- [ ] "Where is the Bearer token added to requests?" in the agent box → Retrieval Agent · RAG answer.
-- [ ] "Recent runs" lists each run; clicking one reopens it with the same findings and `run #id`.
+- [ ] A plain question shows the badge "Retrieval Agent · RAG answer" with source cards; a review shows "Review Agent" with findings.
+- [ ] "Recent questions and tasks" lists each run, questions included; clicking one reopens it with the same findings and `run #id`.
 - [ ] Rule findings are labeled `rule · <rule-id>`, model findings `model`. Severity colors are visible.
 
 ## 5. Failure behavior

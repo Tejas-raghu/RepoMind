@@ -85,8 +85,10 @@ Every HTTP call goes through `services/repomindApi.ts`, which validates each
 response shape before the UI shows it. Components:
 
 - `RepositoryPanel` (selector with provider badge and mismatch warning, upload)
-- `AnswerPanel` (question, status, sources)
-- `AgentPanel` / `AgentResult` (task, findings with citation buttons, evidence, plan and trace table, run history)
+- `AgentPanel` / `AgentResult`: the single Ask box. Every question or task goes to `POST …/agents/run`, and the
+  Supervisor routes it. Questions render as an answer with source cards; explain/review tasks render findings with
+  citation buttons and evidence. Both show the plan and trace table, and every run appears in the history.
+  (`/rag/answer` is still available to the API and evaluator.)
 - `RepositoryFileTree` / `CodeViewer` (explorer with cited-line highlighting)
 
 Repository text is always rendered as escaped text.

@@ -2,49 +2,53 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import AgentPanel from '../../src/components/AgentPanel.vue'
 import AgentResult from '../../src/components/AgentResult.vue'
-import AnswerPanel from '../../src/components/AnswerPanel.vue'
 import RepositorySelector from '../../src/components/RepositorySelector.vue'
 import RepositoryUpload from '../../src/components/RepositoryUpload.vue'
-import { abstained, answered, reviewRun } from './fixtures'
+import { abstainedQuestionRun, answered, questionRun, reviewRun } from './fixtures'
 
 const info = { provider: 'ollama', embeddingModel: 'embeddinggemma', chatModel: 'qwen3:4b',
   rerankingEnabled: false, agentModelPlanning: true }
 
-describe('AnswerPanel', () => {
-  const props = { repositoryName: 'TaskTrail', busy: false, elapsedSeconds: 0, answer: null, error: '' }
+describe('AgentPanel (single ask box)', () => {
+  const props = { repositoryName: 'TaskTrail', busy: false, elapsedSeconds: 0, run: null, error: '',
+    history: [], historyError: '' }
 
-  it('renders a grounded answer with escaped source code and citation navigation', async () => {
-    const wrapper = mount(AnswerPanel, { props: { ...props, answer: answered } })
-    expect(wrapper.text()).toContain('Answer ready')
+  it('shows a question result as an answer with escaped source code and citation navigation', async () => {
+    const wrapper = mount(AgentPanel, { props: { ...props, run: questionRun } })
+    expect(wrapper.find('[data-testid="agent-status"]').text()).toContain('Answer ready')
+    expect(wrapper.find('[data-testid="agent-route"]').text()).toBe('Retrieval Agent · RAG answer')
+    expect(wrapper.find('.result-body h3').text()).toBe('What the code says')
     expect(wrapper.text()).toContain('TaskTrail/src/services/apiClient.ts')
+    expect(wrapper.findAll('[data-testid="agent-finding"]')).toHaveLength(0)
     expect(wrapper.find('pre code').text()).toContain('<script>alert(1)</script>')
     expect(wrapper.find('script').exists()).toBe(false)
     await wrapper.findAll('button').find((b) => b.text() === 'Open in explorer')!.trigger('click')
     expect(wrapper.emitted('navigate')?.[0]?.[0]).toMatchObject({ filePath: answered.sources[0].filePath, startLine: 1 })
   })
 
-  it('shows abstentions without sources and surfaces errors and progress', () => {
-    const none = mount(AnswerPanel, { props: { ...props, answer: abstained } })
+  it('shows abstentions without sources and surfaces errors, progress and the empty state', () => {
+    const none = mount(AgentPanel, { props: { ...props, run: abstainedQuestionRun } })
     expect(none.text()).toContain('Insufficient evidence')
     expect(none.text()).toContain('No grounded answer')
     expect(none.find('.source-card').exists()).toBe(false)
 
-    const failed = mount(AnswerPanel, { props: { ...props, error: 'The RepoMind API is unavailable.' } })
+    const failed = mount(AgentPanel, { props: { ...props, error: 'The RepoMind API is unavailable.' } })
     expect(failed.find('[role="alert"]').text()).toContain('unavailable')
 
-    const busy = mount(AnswerPanel, { props: { ...props, busy: true, elapsedSeconds: 12 } })
+    const busy = mount(AgentPanel, { props: { ...props, busy: true, elapsedSeconds: 12 } })
     expect(busy.find('[role="status"]').text()).toContain('12s elapsed')
     expect(busy.find('textarea').attributes('disabled')).toBeDefined()
     expect(busy.findAll('button').some((b) => b.text() === 'Cancel')).toBe(true)
+
+    expect(mount(AgentPanel, { props }).find('.empty-result').exists()).toBe(true)
   })
 
-  it('submits a trimmed question and blocks empty input', async () => {
-    const wrapper = mount(AnswerPanel, { props })
-    const submit = wrapper.find('button[type="submit"]')
-    expect(submit.attributes('disabled')).toBeDefined()
-    await wrapper.find('textarea').setValue('  Where is the token?  ')
+  it('submits a trimmed question or task and blocks empty input', async () => {
+    const wrapper = mount(AgentPanel, { props })
+    expect(wrapper.find('button[type="submit"]').attributes('disabled')).toBeDefined()
+    await wrapper.find('textarea').setValue('  Review guards.ts  ')
     await wrapper.find('form').trigger('submit')
-    expect(wrapper.emitted('ask')).toEqual([['Where is the token?']])
+    expect(wrapper.emitted('run')).toEqual([['Review guards.ts']])
   })
 })
 
@@ -82,12 +86,12 @@ describe('AgentPanel', () => {
   it('requires a repository and runs a trimmed task from an example', async () => {
     const disabled = mount(AgentPanel, { props: { ...props, repositoryName: null } })
     expect(disabled.find('textarea').attributes('disabled')).toBeDefined()
-    expect(disabled.text()).toContain('Select a repository to run agents.')
+    expect(disabled.text()).toContain('Select a repository to start asking questions.')
 
     const wrapper = mount(AgentPanel, { props })
     await wrapper.find('.example-chip').trigger('click')
     await wrapper.find('form').trigger('submit')
-    expect(wrapper.emitted('run')).toEqual([['Explain what apiClient.ts does']])
+    expect(wrapper.emitted('run')).toEqual([['Where is the Bearer token added to requests?']])
   })
 
   it('offers cancel while busy and reopens a past run', async () => {

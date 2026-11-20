@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import SourceCodeCard from './SourceCodeCard.vue'
 import type { AgentCitation, AgentRunResponse } from '../types/api'
 
 const props = defineProps<{ run: AgentRunResponse }>()
@@ -19,6 +20,25 @@ const routeLabels: Record<string, string> = {
   unsupported: 'Supervisor',
 }
 
+const answerLabels: Record<string, string> = {
+  answered: 'Answer ready',
+  insufficient_evidence: 'Insufficient evidence',
+  uncertain: 'Evidence uncertain',
+  verification_unavailable: 'Verification unavailable',
+  insufficient_context: 'Context limit reached',
+  generation_unavailable: 'Generation unavailable',
+}
+
+// Location questions run the verified RAG flow; show them as an answer with source
+// cards, as the original Ask panel did. Other routes show agent findings.
+const answer = computed(() => (props.run.route === 'question' ? props.run.answer : null))
+const statusLabel = computed(() => answer.value
+  ? answerLabels[answer.value.status] ?? answer.value.status.replaceAll('_', ' ')
+  : statusLabels[props.run.status] ?? props.run.status)
+const succeeded = computed(() => answer.value ? answer.value.status === 'answered' : props.run.status === 'completed')
+const heading = computed(() => answer.value
+  ? answer.value.status === 'answered' ? 'What the code says' : 'No grounded answer'
+  : props.run.status === 'completed' || props.run.status === 'partial' ? 'What the agents found' : 'No grounded result')
 const seconds = computed(() => (props.run.durationMs / 1000).toFixed(1))
 const shortPath = (path: string) => path.split('/').slice(-2).join('/')
 </script>
@@ -27,9 +47,9 @@ const shortPath = (path: string) => path.split('/').slice(-2).join('/')
   <div class="result agent-result" aria-live="polite">
     <div class="result-topline">
       <div class="agent-badges">
-        <span class="status-pill" :class="run.status === 'completed' ? 'status-answered' : 'status-muted'"
+        <span class="status-pill" :class="succeeded ? 'status-answered' : 'status-muted'"
           data-testid="agent-status">
-          <span class="status-indicator" aria-hidden="true"></span>{{ statusLabels[run.status] ?? run.status }}
+          <span class="status-indicator" aria-hidden="true"></span>{{ statusLabel }}
         </span>
         <span class="agent-route" data-testid="agent-route">{{ routeLabels[run.route] ?? run.route }}</span>
       </div>
@@ -38,11 +58,20 @@ const shortPath = (path: string) => path.split('/').slice(-2).join('/')
     </div>
 
     <div class="result-body">
-      <h3>{{ run.status === 'completed' || run.status === 'partial' ? 'What the agents found' : 'No grounded result' }}</h3>
-      <p data-testid="agent-summary">{{ run.summary }}</p>
+      <h3>{{ heading }}</h3>
+      <p data-testid="agent-summary">{{ answer ? answer.answer : run.summary }}</p>
     </div>
 
-    <div v-if="run.findings.length" class="sources-section">
+    <div v-if="answer && answer.sources.length" class="sources-section">
+      <div class="sources-heading">
+        <h3>Sources</h3>
+        <span>{{ answer.sources.length }} {{ answer.sources.length === 1 ? 'reference' : 'references' }}</span>
+      </div>
+      <SourceCodeCard v-for="source in answer.sources" :key="source.chunkId" :source="source"
+        @navigate="emit('navigate', $event)" />
+    </div>
+
+    <div v-if="!answer && run.findings.length" class="sources-section">
       <div class="sources-heading">
         <h3>Findings</h3>
         <span>{{ run.findings.length }} grounded {{ run.findings.length === 1 ? 'finding' : 'findings' }}</span>
@@ -69,7 +98,7 @@ const shortPath = (path: string) => path.split('/').slice(-2).join('/')
       </ul>
     </div>
 
-    <details v-if="run.evidence.length" class="agent-details">
+    <details v-if="!answer && run.evidence.length" class="agent-details">
       <summary>Evidence read by the agents ({{ run.evidence.length }})</summary>
       <div v-for="item in run.evidence" :key="item.id" class="evidence-item">
         <div class="source-toolbar">

@@ -2,12 +2,12 @@
 
 AI codebase intelligence that runs locally. Upload a repository ZIP, then:
 
-- **ask** questions and get answers grounded in retrieved code, with exact file
-  and line citations, or an explicit abstention when the evidence is not there;
-- **explore** the indexed source and jump from any citation to its lines;
-- **run agents**: a Supervisor routes each task to a Retrieval, Code Analysis or
-  Review Agent that uses allowlisted read-only tools, validates line citations,
-  and records a full execution trace.
+- **ask** anything in one box: a Supervisor routes "where/how" questions to a
+  grounded RAG answer with exact file and line citations (or an explicit
+  abstention when the evidence is not there), and "explain"/"review" tasks to a
+  Code Analysis or Review Agent that uses allowlisted read-only tools, validates
+  line citations, and records a full execution trace;
+- **explore** the indexed source and jump from any citation to its lines.
 
 Stack: Vue 3 + TypeScript + Vite · ASP.NET Core (.NET 10) · PostgreSQL 17 +
 pgvector · Ollama (`embeddinggemma`, `qwen3:4b`). Cloudflare Workers AI is an
@@ -45,8 +45,8 @@ npm run dev     # http://127.0.0.1:5173
 
 Try it with the bundled sample:
 `Compress-Archive -Path evaluation/fixtures/TaskTrail -DestinationPath $env:TEMP\TaskTrail.zip -Force`,
-then upload the ZIP in the UI. Ask "Where is the Bearer token added to requests?"
-and run the agent task "Review src/router/guards.ts for security issues".
+then upload the ZIP in the UI. In the Ask box, try "Where is the Bearer token added
+to requests?" and "Review src/router/guards.ts for security issues".
 
 ## Tests
 

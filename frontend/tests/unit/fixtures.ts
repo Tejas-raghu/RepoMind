@@ -46,3 +46,19 @@ export const fileContent: IndexedFileContent = {
   coveredRanges: [{ startLine: 1, endLine: 2 }, { startLine: 4, endLine: 4 }],
   gapRanges: [{ startLine: 3, endLine: 3 }], conflictRanges: [],
 }
+
+// A location question routed by the Supervisor to the verified RAG flow.
+export const questionRun: AgentRunResponse = {
+  ...reviewRun, runId: 8, task: 'Where is the Bearer token added?', route: 'question',
+  routeReason: 'Locate/implementation question.', status: 'completed', summary: answered.answer,
+  findings: [{ title: 'Grounded answer', detail: 'The client sets the header.', severity: null, origin: 'model',
+    citations: [{ filePath: answered.sources[0].filePath, startLine: 1, endLine: 4 }], ruleId: null }],
+  evidence: [{ id: 'E1', filePath: answered.sources[0].filePath, startLine: 1, endLine: 4,
+    content: answered.sources[0].content, source: 'rag_answer' }],
+  answer: answered,
+}
+
+export const abstainedQuestionRun: AgentRunResponse = {
+  ...questionRun, runId: 9, task: 'Where is Stripe used?', status: 'abstained', summary: abstained.answer,
+  findings: [], evidence: [], answer: abstained,
+}

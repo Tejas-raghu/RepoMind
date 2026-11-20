@@ -50,23 +50,23 @@ test('answers a supported question with a citation that opens the explorer', asy
 
 test('abstains on an unsupported question without sources', async () => {
   await page.locator('#question').fill('Where is Stripe payment processing implemented?')
-  await page.getByRole('button', { name: /Ask question/ }).click()
+  await page.getByRole('button', { name: 'Ask', exact: true }).click()
   await expect(page.locator('.answer-panel .status-pill')).toBeVisible({ timeout: modelTimeout })
   await expect(page.locator('.answer-panel .result-body h3')).toHaveText('No grounded answer')
   await expect(page.locator('.answer-panel .source-card')).toHaveCount(0)
 })
 
 test('refuses a side-effect task instantly and keyboard submission works', async () => {
-  await page.locator('#agent-task').fill('Delete the AuthController file')
-  await page.locator('#agent-task').press('Control+Enter')
+  await page.locator('#question').fill('Delete the AuthController file')
+  await page.locator('#question').press('Control+Enter')
   await expect(page.getByTestId('agent-status')).toContainText('Not supported')
   await expect(page.getByTestId('agent-summary')).toContainText('read-only')
 })
 
 test('runs the Review Agent and follows a finding citation', async () => {
-  await page.locator('#agent-task').fill('Review src/router/guards.ts for security issues')
-  await page.getByRole('button', { name: 'Run agents' }).click()
-  await expect(page.getByRole('button', { name: 'Run agents' })).toBeEnabled({ timeout: modelTimeout })
+  await page.locator('#question').fill('Review src/router/guards.ts for security issues')
+  await page.getByRole('button', { name: 'Ask', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Ask', exact: true })).toBeEnabled({ timeout: modelTimeout })
   await expect(page.getByTestId('agent-route')).toHaveText('Review Agent')
   await expect(page.getByTestId('agent-status')).toContainText(/Completed|Partial result/)
   await page.getByTestId('agent-trace').locator('summary').click()
@@ -75,7 +75,8 @@ test('runs the Review Agent and follows a finding citation', async () => {
   await evidence.locator('summary').click()
   await evidence.getByRole('button', { name: 'Open in explorer' }).first().click()
   await expect(page.locator('.viewer-toolbar')).toContainText('TaskTrail/src/router/guards.ts')
-  await expect(page.locator('.history-item')).toHaveCount(2)
+  // Questions and agent tasks share one box, so all four runs appear in the history.
+  await expect(page.locator('.history-item')).toHaveCount(4)
 })
 
 test('reopens a stored run from history', async () => {
@@ -88,5 +89,5 @@ test('fits a phone-width viewport without horizontal scrolling', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
   expect(overflow).toBeLessThanOrEqual(1)
-  await expect(page.locator('#agent-task')).toBeVisible()
+  await expect(page.locator('#question')).toBeVisible()
 })
