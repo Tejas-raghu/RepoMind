@@ -96,6 +96,7 @@ Repository text is always rendered as escaped text.
 | Section | Defaults and notes |
 |---|---|
 | `Ai:Provider` | `ollama` (default) or `cloudflare` |
+| `Cloudflare:ChatModel` | Default `@cf/openai/gpt-oss-20b`. Workers AI retires models (the original Qwen3 30B chat model began returning HTTP 410 on 2026-11-20), so the model name is configuration, not code. |
 | `Reranking:Enabled` | `false`. Local LLM reranking timed out in every recorded run and caused verification to fail too, so it is opt-in. |
 | `EvidenceVerification:TimeoutSeconds` | `120`. The measured average verifier time was about 50 s, so the previous 60 s limit failed often. |
 | `RagGeneration:MaxOutputTokens` | `512` (was 300), together with `maxLength` caps on the summary and explanation in the generation schema. Uncapped output was cut off into invalid JSON and reported as `generation_unavailable`. |

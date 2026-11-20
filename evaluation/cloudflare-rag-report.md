@@ -1,6 +1,6 @@
 ﻿# Day 14 — TaskTrail RAG evaluation
 
-- Run (UTC): 2026-11-14 12:15:12
+- Run (UTC): 2026-11-20 11:25:21
 - API: `http://127.0.0.1:5200`; repository: `1246` (TaskTrail indexed sample)
 - Retrieval: hybrid search `topK: 5`; RAG answer: `topK: 3` (same as the Vue UI).
 - Reranking: evaluator uses the API process setting; record that setting when comparing runs.
@@ -12,29 +12,29 @@
 - Grounded supported answers: 5/5
 - Correct abstentions: 5/5 unsupported questions
 - False acceptances: 0/5 unsupported questions
-- Average RAG answer request time: 6085 ms across 10 attempts
-- Average retrieval request time: 737 ms across 5 attempts
+- Average RAG answer request time: 6388 ms across 10 attempts
+- Average retrieval request time: 538 ms across 5 attempts
 - HTTP, timeout, or response-parse failures: 0 question(s)
 
 A retrieval hit requires the exact labeled path, the anchor line within the returned chunk range, and the anchor text in that chunk. HTTP 200 alone is never a hit. A correct abstention requires `insufficient_evidence` with zero sources. `answered` on an unsupported question is a false acceptance; unavailable or uncertain outcomes are failures, not correct abstentions.
 
 | Question | Retrieval rank | Answer status | Labeled source in answer | Search ms | Answer ms | Outcome |
 |---|---:|---|---|---:|---:|---|
-| Where is the Bearer token added to requests? | 1 | answered | yes | 619 | 6474 | grounded answer |
+| Where is the Bearer token added to requests? | 1 | answered | yes | 943 | 3241 | grounded answer |
 | ↳ `bearer` | Expected `TaskTrail/src/services/apiClient.ts` L15 | Retrieved: TaskTrail/src/services/apiClient.ts, TaskTrail/server/AuthController.cs, TaskTrail/src/services/authService.ts, TaskTrail/src/router/guards.ts, TaskTrail/README.md | Answer sources: TaskTrail/src/services/apiClient.ts | | | |
-| How are protected routes secured? | 1 | answered | yes | 175 | 13806 | grounded answer |
-| ↳ `routes` | Expected `TaskTrail/src/router/guards.ts` L6 | Retrieved: TaskTrail/src/router/guards.ts, TaskTrail/src/services/authService.ts, TaskTrail/src/services/apiClient.ts, TaskTrail/server/AuthController.cs, TaskTrail/README.md | Answer sources: TaskTrail/src/router/guards.ts | | | |
-| Where is backend login implemented? | 1 | answered | yes | 496 | 9846 | grounded answer |
+| How are protected routes secured? | 1 | answered | yes | 900 | 5618 | grounded answer |
+| ↳ `routes` | Expected `TaskTrail/src/router/guards.ts` L6 | Retrieved: TaskTrail/src/router/guards.ts, TaskTrail/src/services/authService.ts, TaskTrail/src/services/apiClient.ts, TaskTrail/server/AuthController.cs, TaskTrail/README.md | Answer sources: TaskTrail/src/router/guards.ts, TaskTrail/src/services/authService.ts | | | |
+| Where is backend login implemented? | 1 | answered | yes | 188 | 4197 | grounded answer |
 | ↳ `backend-login` | Expected `TaskTrail/server/AuthController.cs` L23 | Retrieved: TaskTrail/server/AuthController.cs, TaskTrail/src/services/authService.ts, TaskTrail/src/router/guards.ts, TaskTrail/src/services/apiClient.ts, TaskTrail/README.md | Answer sources: TaskTrail/server/AuthController.cs | | | |
-| Where are Leaflet markers created? | 1 | answered | yes | 1945 | 4808 | grounded answer |
+| Where are Leaflet markers created? | 1 | answered | yes | 211 | 6051 | grounded answer |
 | ↳ `leaflet` | Expected `TaskTrail/src/map/outletMarkers.ts` L20 | Retrieved: TaskTrail/src/map/outletMarkers.ts, TaskTrail/server/AuthController.cs, TaskTrail/package.json, TaskTrail/README.md, TaskTrail/src/data/sampleTasks.json | Answer sources: TaskTrail/src/map/outletMarkers.ts | | | |
-| How are overdue tasks identified? | 1 | answered | yes | 449 | 5767 | grounded answer |
+| How are overdue tasks identified? | 1 | answered | yes | 448 | 10164 | grounded answer |
 | ↳ `overdue` | Expected `TaskTrail/src/services/taskService.ts` L26 | Retrieved: TaskTrail/src/services/taskService.ts, TaskTrail/src/components/TaskBoard.vue, TaskTrail/src/router/guards.ts, TaskTrail/src/data/sampleTasks.json, TaskTrail/README.md | Answer sources: TaskTrail/src/services/taskService.ts | | | |
-| Where is Stripe payment processing implemented? | n/a | insufficient_evidence | n/a | — | 3817 | correct abstention |
-| Where is Redis caching configured? | n/a | insufficient_evidence | n/a | — | 3554 | correct abstention |
-| Where is AWS S3 file upload implemented? | n/a | insufficient_evidence | n/a | — | 4232 | correct abstention |
-| Where are GraphQL subscriptions implemented? | n/a | insufficient_evidence | n/a | — | 3843 | correct abstention |
-| Where is Kubernetes deployment configured? | n/a | insufficient_evidence | n/a | — | 4705 | correct abstention |
+| Where is Stripe payment processing implemented? | n/a | insufficient_evidence | n/a | — | 1534 | correct abstention |
+| Where is Redis caching configured? | n/a | insufficient_evidence | n/a | — | 1417 | correct abstention |
+| Where is AWS S3 file upload implemented? | n/a | insufficient_evidence | n/a | — | 28691 | correct abstention |
+| Where are GraphQL subscriptions implemented? | n/a | insufficient_evidence | n/a | — | 1426 | correct abstention |
+| Where is Kubernetes deployment configured? | n/a | insufficient_evidence | n/a | — | 1546 | correct abstention |
 
 Hit@1 example: if the first of five returned chunks is the labeled implementation chunk, that question scores one hit. If it first appears at rank 3, it scores Hit@5 but not Hit@1. The denominator stays five supported questions; request failures are shown separately and score no hit. Average time uses Stopwatch wall time for every attempted request, including failed requests.
 

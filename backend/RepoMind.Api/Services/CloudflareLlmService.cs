@@ -6,7 +6,7 @@ namespace RepoMind.Api.Services;
 
 public sealed class CloudflareLlmService(CloudflareAiClient client) : ILlmService
 {
-    public const string Model = "@cf/qwen/qwen3-30b-a3b-fp8";
+    public string Model => client.ChatModel;
 
     public async Task<LlmChatResponse> ChatAsync(string prompt, CancellationToken cancellationToken)
     {

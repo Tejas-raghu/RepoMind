@@ -169,18 +169,19 @@ public sealed class CloudflareProviderTests
         Assert.Equal(3, handler.Calls);
     }
 
-    private static CloudflareAiClient Client(StubHandler handler) => new(
-        new HttpClient(handler) { BaseAddress = new Uri("https://api.cloudflare.com/") }, Config());
+    private static CloudflareAiClient Client(StubHandler handler, string? chatModel = null) => new(
+        new HttpClient(handler) { BaseAddress = new Uri("https://api.cloudflare.com/") }, Config(chatModel));
 
     [Fact]
     public async Task Agent_model_disables_hidden_reasoning_and_keeps_a_safe_output_budget()
     {
+        // "/no_think" is Qwen3's switch, so this test pins a Qwen3 model explicitly.
         var handler = new StubHandler(_ => Reply(new { success = true, result = new
         {
             choices = new[] { new { message = new { content = "{\"reason\":\"r\",\"relevant\":true,\"paths\":[\"a.ts\"]}" } } },
             usage = new { prompt_tokens = 139, completion_tokens = 53 }
         } }));
-        var model = new RepoMind.Api.Agents.CloudflareAgentModel(Client(handler));
+        var model = new RepoMind.Api.Agents.CloudflareAgentModel(Client(handler, "@cf/qwen/qwen3.8-27b"));
 
         var result = await model.CompleteJsonAsync(new RepoMind.Api.Agents.AgentModelRequest(
             "Plan.", "Task: review auth", new { }, "{...}", 200, 4096), CancellationToken.None);
@@ -206,12 +207,37 @@ public sealed class CloudflareProviderTests
             [], ["a.ts"]).AllowReasoning);
     }
 
-    private static IConfiguration Config() => new ConfigurationBuilder().AddInMemoryCollection(
+    private static IConfiguration Config(string? chatModel = null) => new ConfigurationBuilder().AddInMemoryCollection(
         new Dictionary<string, string?>
         {
             ["Cloudflare:AccountId"] = new string('a', 32),
-            ["Cloudflare:ApiToken"] = "test-token"
+            ["Cloudflare:ApiToken"] = "test-token",
+            ["Cloudflare:ChatModel"] = chatModel
         }).Build();
+
+    [Fact]
+    public async Task Chat_model_is_configurable_and_no_think_is_only_sent_to_qwen3()
+    {
+        Assert.Equal("@cf/openai/gpt-oss-20b", CloudflareAiClient.ChatModelFrom(Config()));
+        Assert.Equal("@cf/google/gemma-4-26b-a4b-it", CloudflareAiClient.ChatModelFrom(Config("@cf/google/gemma-4-26b-a4b-it")));
+        Assert.Throws<InvalidOperationException>(() => CloudflareAiClient.ChatModelFrom(Config("gpt-4o")));
+
+        var handler = new StubHandler(_ => Reply(new { success = true, result = new
+        {
+            choices = new[] { new { message = new { content = "{\"relevant\":false,\"paths\":[]}" } } }
+        } }));
+        var model = new RepoMind.Api.Agents.CloudflareAgentModel(Client(handler));
+        await model.CompleteJsonAsync(new RepoMind.Api.Agents.AgentModelRequest(
+            "Plan.", "Task", new { }, "{...}", 200, 4096), CancellationToken.None);
+        Assert.Contains("/ai/run/@cf/openai/gpt-oss-20b", handler.Path);
+        using var body = JsonDocument.Parse(handler.Body!);
+        Assert.DoesNotContain("/no_think", body.RootElement.GetProperty("messages")[1].GetProperty("content").GetString());
+        Assert.Equal(1200, body.RootElement.GetProperty("max_tokens").GetInt32());
+
+        var chat = new StubHandler(_ => Reply(new { success = true, result = new { response = "ok" } }));
+        await new CloudflareLlmService(Client(chat, "@cf/google/gemma-4-26b-a4b-it")).ChatAsync("hi", CancellationToken.None);
+        Assert.Contains("/ai/run/@cf/google/gemma-4-26b-a4b-it", chat.Path);
+    }
 
     private static HttpResponseMessage Reply(object value) => new(HttpStatusCode.OK)
     { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json") };

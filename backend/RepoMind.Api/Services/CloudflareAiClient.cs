@@ -12,9 +12,25 @@ public sealed class CloudflareAiException(string message, int statusCode = 502) 
 
 public sealed class CloudflareAiClient(HttpClient httpClient, IConfiguration configuration)
 {
+    // Workers AI retires models on a schedule: @cf/qwen/qwen3-30b-a3b-fp8 started returning
+    // HTTP 410 on 2026-11-20. The chat model is therefore a setting (Cloudflare:ChatModel),
+    // so the next retirement is a configuration change rather than a code change.
+    public const string DefaultChatModel = "@cf/openai/gpt-oss-20b";
+
     private readonly string accountId = ValidAccount(configuration["Cloudflare:AccountId"]);
     private readonly string token = configuration["Cloudflare:ApiToken"] is { Length: > 0 } value
         ? value : throw new InvalidOperationException("Cloudflare:ApiToken is required in environment variables or User Secrets.");
+
+    public string ChatModel { get; } = ChatModelFrom(configuration);
+
+    public static string ChatModelFrom(IConfiguration configuration)
+    {
+        var model = configuration["Cloudflare:ChatModel"];
+        if (string.IsNullOrWhiteSpace(model)) return DefaultChatModel;
+        return model.StartsWith("@cf/", StringComparison.Ordinal) && !model.Any(char.IsWhiteSpace)
+            ? model
+            : throw new InvalidOperationException("Cloudflare:ChatModel must be a Workers AI model name such as @cf/openai/gpt-oss-20b.");
+    }
 
     public async Task<JsonDocument> RunAsync(string model, object input, CancellationToken cancellationToken)
     {

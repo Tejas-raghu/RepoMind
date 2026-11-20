@@ -123,7 +123,7 @@ app.MapGet("/api/system/info", (IConfiguration configuration) =>
     return Results.Ok(new SystemInfoResponse(
         cloudflare ? "cloudflare" : "ollama",
         cloudflare ? CloudflareEmbeddingService.Model : configuration["Ollama:EmbeddingModel"] ?? "",
-        cloudflare ? CloudflareLlmService.Model : configuration["Ollama:ChatModel"] ?? "",
+        cloudflare ? CloudflareAiClient.ChatModelFrom(configuration) : configuration["Ollama:ChatModel"] ?? "",
         configuration.GetValue<bool>("Reranking:Enabled") &&
             (!cloudflare || configuration.GetValue<bool>("Cloudflare:RerankingEnabled")),
         AgentOptions.From(configuration).ModelPlanning));

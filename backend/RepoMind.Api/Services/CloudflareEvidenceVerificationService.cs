@@ -34,7 +34,7 @@ public sealed class CloudflareEvidenceVerificationService(CloudflareAiClient cli
         {
             try
             {
-                using var document = await client.RunAsync(CloudflareLlmService.Model, request,
+                using var document = await client.RunAsync(client.ChatModel, request,
                     cancellationToken);
                 using var output = JsonDocument.Parse(CloudflareLlmService.Content(document.RootElement));
                 return OllamaEvidenceVerificationService.ParseDecision(output.RootElement, ids, limited);

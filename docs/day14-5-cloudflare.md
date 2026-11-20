@@ -72,20 +72,32 @@ try {
 } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
 ```
 
-The chosen Cloudflare models are Qwen3 Embedding 0.6B (1024 dimensions), Qwen3
-30B A3B for chat, verification and grounded answers, and optional BGE Reranker
-Base. Cloudflare reranking requires both `Reranking__Enabled=true` and
+The Cloudflare models are Qwen3 Embedding 0.6B (1024 dimensions), OpenAI
+`gpt-oss-20b` for chat, verification, grounded answers and agents, and optional
+BGE Reranker Base.
+
+**Chat model change (2026-11-20).** Cloudflare retired the original chat model,
+`@cf/qwen/qwen3-30b-a3b-fp8`; every chat call then returned HTTP 410 ("Model has
+been deprecated"), while embeddings kept working. The chat model is now a setting,
+`Cloudflare__ChatModel` (default `@cf/openai/gpt-oss-20b`), so the next retirement
+is a configuration change. Replacement chosen by measuring RepoMind's own JSON
+tasks against the live catalog: gpt-oss-20b answered a planner request in 1.8 s
+and a review in 6.0 s with valid JSON; `gemma-4-26b-a4b-it` was valid but took
+7.5 s and 42 s; `glm-4.7-flash` timed out. Check the
+[model catalog](https://developers.cloudflare.com/workers-ai/models/) for
+deprecation dates before choosing another model. The Qwen3-specific `/no_think`
+switch is sent only when the configured chat model is a Qwen3 model. Cloudflare reranking requires both `Reranking__Enabled=true` and
 `Cloudflare__RerankingEnabled=true`. It is off by default: in the two-file smoke
 check BGE put the descriptive README before the implementation, changing Hit@1
 from 1/1 to 0/1. This tiny check does not establish general BGE quality.
 Cloudflare currently includes a daily free Workers AI allocation. Keep uploads
 small and stop when the API reports HTTP 429 quota exhaustion; the backend does
 not automatically move to a paid plan.
-Cloudflare Qwen does not appear on the current JSON Mode support list, so the
-backend asks for JSON in the prompt and strictly validates the returned object.
-Malformed verification or answer JSON gets one bounded retry, then fails closed.
-Cloudflare answers allow up to 1,200 output tokens by default because Qwen may
-spend part of that allowance before producing final JSON. BGE sees at most 700 characters of each candidate
+The backend does not rely on Cloudflare JSON Mode: it asks for JSON in the prompt
+and strictly validates the returned object. Malformed verification or answer JSON
+gets one bounded retry, then fails closed. Cloudflare answers allow up to 1,200
+output tokens by default because reasoning models spend part of that allowance
+before producing the final JSON. BGE sees at most 700 characters of each candidate
 including its path; retrieval and citations keep the full original stored chunk.
 The cap is an approximation of BGE's 512-token pair limit, so an over-limit API
 response can still fail safely. Capacity error 3040 gets at most two retries;
@@ -121,7 +133,7 @@ The API reports prompt/output tokens only if Cloudflare supplies them; it does
 not calculate or invent neuron usage.
 
 Cloudflare references: [embedding model](https://developers.cloudflare.com/workers-ai/models/qwen3-embedding-0.6b/),
-[chat model](https://developers.cloudflare.com/workers-ai/models/qwen3-30b-a3b-fp8/),
+[chat model](https://developers.cloudflare.com/workers-ai/models/gpt-oss-20b/),
 [reranker](https://developers.cloudflare.com/workers-ai/models/bge-reranker-base/),
 [JSON Mode support](https://developers.cloudflare.com/workers-ai/features/json-mode/),
 [errors](https://developers.cloudflare.com/workers-ai/platform/errors/),

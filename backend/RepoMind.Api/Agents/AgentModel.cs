@@ -65,17 +65,20 @@ public sealed class OllamaAgentModel(HttpClient httpClient, IConfiguration confi
 
 public sealed class CloudflareAgentModel(CloudflareAiClient client) : IAgentModel
 {
-    // Cloudflare's Qwen3 reasons before answering by default, and reasoning tokens count
-    // against max_tokens. Measured live: a 200-token planner budget was spent entirely
-    // on hidden reasoning (finish_reason "length", empty content); with Qwen3's
-    // "/no_think" switch the same request needed 53 tokens. But without reasoning the
-    // reviewer answered "no issues" in 34 tokens, so judgment steps keep reasoning and
-    // get a budget large enough for thinking plus the JSON answer.
+    // Reasoning models on Workers AI think before answering, and reasoning tokens count
+    // against max_tokens. Measured live with Qwen3: a 200-token planner budget was spent
+    // entirely on hidden reasoning (finish_reason "length", empty content); Qwen3's
+    // "/no_think" switch then needed 53 tokens. Without reasoning the reviewer answered
+    // "no issues" in 34 tokens, so judgment steps keep reasoning and get a budget large
+    // enough for thinking plus the JSON answer. "/no_think" is Qwen3-specific; other
+    // models (gpt-oss-20b: planner 1.8 s, review 6.0 s) rely on the token floors alone.
     public const string NoThink = " /no_think";
     public const int MinimumOutputTokens = 1_200;
     public const int MinimumReasoningOutputTokens = 4_000;
 
-    public string ModelName => CloudflareLlmService.Model;
+    public string ModelName => client.ChatModel;
+
+    private bool SupportsNoThink => client.ChatModel.Contains("/qwen3", StringComparison.OrdinalIgnoreCase);
 
     public async Task<AgentModelResult> CompleteJsonAsync(AgentModelRequest request,
         CancellationToken cancellationToken)
@@ -87,7 +90,8 @@ public sealed class CloudflareAgentModel(CloudflareAiClient client) : IAgentMode
                 new { role = "system", content = request.SystemInstruction +
                     " Return ONLY one JSON object: " + request.SchemaDescription +
                     " No Markdown fences, no extra keys." },
-                new { role = "user", content = request.UserContent + (request.AllowReasoning ? "" : NoThink) }
+                new { role = "user", content = request.UserContent +
+                    (request.AllowReasoning || !SupportsNoThink ? "" : NoThink) }
             },
             stream = false, temperature = 0.0,
             max_tokens = Math.Max(request.MaxOutputTokens,

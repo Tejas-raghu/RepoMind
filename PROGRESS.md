@@ -207,3 +207,22 @@
 - **Agent evaluation** (`evaluation/cloudflare-agents-report.md`): routing **10/10**, grounded tasks **4/5**, abstentions **2/2**, refusals **3/3**, **0** of 8 citations out of range, **0** fallback/timeout/failed steps, 10/10 runs reloadable. Median **4,182 ms**, max 12,015 ms. The miss is the `guards.ts` review: the model reasoned (745 tokens) and reported no issues for the 16-line guard, a model judgment rather than a failure. The local model reported two minor findings there. The auth review found a real high-severity issue: a JWT stored in `localStorage` at `authService.ts:19`.
 - **Browser E2E** against the Cloudflare-mode API (`E2E_PROVIDER=cloudflare`): **8/8 passed in 27 s** (local: 5.7 min).
 - Quota (neuron) usage for the whole run was not totalled. One planner call measured 2–12 neurons in the probe.
+
+## Cloudflare chat model retired — replaced and re-verified (2026-11-20)
+
+- **Symptom:** in Cloudflare mode, "How is the late fee calculated?" on a LibraryHub test upload (a temporary manual-test sample, since removed) returned HTTP 502 after 2.8 s. A direct check showed Cloudflare answering HTTP 410, code 5028: `@cf/qwen/qwen3-30b-a3b-fp8 was deprecated on 2026-11-20`. Embeddings and the reranker still worked, which is why uploads succeeded. Local Ollama mode was unaffected.
+- **Replacement chosen by measurement.** The live catalog was listed through the Workers AI models API, and current low-cost reasoning models were run on RepoMind's planner and review JSON tasks:
+  - `gpt-oss-20b`: planner 1.8 s, review 6.0 s, both valid, 2 findings
+  - `gemma-4-26b-a4b-it`: 7.5 s / 42 s, valid
+  - `glm-4.7-flash`: planner 106 s, review timed out
+- **Fix:**
+  - The chat model is now configuration (`Cloudflare:ChatModel`, default `@cf/openai/gpt-oss-20b`) exposed by `CloudflareAiClient`. A future retirement needs no code change.
+  - The Qwen3 `/no_think` switch is sent only to Qwen3 models.
+  - Tests cover the default, an override, invalid names, and model-specific request shapes. Backend tests pass **219/219**.
+- **Re-verified in Cloudflare mode with gpt-oss-20b:**
+  - The original failing request answered in 4.4 s, citing `LateFeeCalculator.cs`: 0.50 per day, capped at 10.00.
+  - **RAG** (`evaluation/cloudflare-rag-report.md`): Hit@1 5/5, Hit@5 5/5, grounded 5/5, abstentions 5/5, false acceptances 0/5.
+  - **Agents** (`evaluation/cloudflare-agents-report.md`): routing 10/10, grounded 5/5, abstentions 2/2, refusals 3/3, 0 of 13 citations out of range, 0 failed steps, median 5.2 s, max 51.3 s. That is better than the retired model's 9/10.
+  - **Browser E2E:** 8/8 in 2.1 min.
+  - The Qwen3 reports are kept as `*-qwen3-retired.md`.
+- **Environment note:** one earlier agent run in this session failed with HTTP 503. The PostgreSQL log showed a Docker disk sync taking 323 s, which stalled every database call. Re-running after the database recovered gave the results above. The RAG run overlapped that stall: its one 28.7 s answer (AWS S3, still a correct abstention) was slowed by it, so the average answer time in that report is inflated. Ignoring that answer, answers took 1.4–10.2 s.
