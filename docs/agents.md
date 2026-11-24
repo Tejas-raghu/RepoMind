@@ -54,8 +54,10 @@ the user didn't name any, goes to the model planner. It sees the search results
 and the allowed paths, and must return JSON choosing at most two paths from that
 list. Two safeguards apply:
 
-- If the planner fails, times out, or returns an unknown path, a rule-based plan
-  takes over.
+- If the planner fails, times out, or returns no usable path, a rule-based plan
+  takes over. A returned path is accepted only when it equals an allowed path or
+  uniquely matches the end of one (models sometimes drop the repository folder);
+  anything else is ignored, so the model can never introduce a path of its own.
 - The model can't veto evidence. If it calls the results unrelated, but a
   *code* file in the search results contains a subject word from the task, the
   rule plan is used. A documentation-only mention ("this repo has no payment
@@ -116,16 +118,39 @@ always comes from the evidence record, never from model text.
 | Run deadline exceeded | `partial` if findings exist, otherwise `failed` |
 | Trace storage fails | The result is still returned with `runId: null` and a `persist_run failed` trace step |
 
+**Coverage: full, partial or none.** The synthesis step returns a `coverage`
+verdict and a short `gaps` list instead of a yes/no "sufficient" flag:
+
+| Coverage | Meaning | Result |
+|---|---|---|
+| `full` | The evidence answers the task | `completed` |
+| `partial` | The evidence shows the code the task is about, but the task also asks about something outside it (a remote server, an external service, a file that wasn't supplied) | `partial`: the cited findings plus a **Not established by this code** list |
+| `none` | The evidence is about a different subject | `abstained` (any named gap is still shown) |
+
+Details the user didn't ask about are not gaps. Gaps are plain text shown as an
+escaped list; they never carry citations.
+
 **Abstention.** Analysis and review abstain (`abstained`) when the planner and
 rules agree that nothing related was found. After synthesis the rules differ by
 agent:
 
-- **Code Analysis Agent:** abstains when the model sets `sufficient=false`,
-  even if it also described the unrelated code it was shown.
-- **Review Agent:** abstains only when `sufficient=false` comes with no valid
-  findings, because a validated defect is a fact about the code that was read.
-  In evaluation, `qwen3:4b` once returned five valid auth findings together with
-  `sufficient=false`.
+- **Code Analysis Agent:** abstains on coverage `none`, even if it also
+  described the unrelated code it was shown.
+- **Review Agent:** abstains only when `none` comes with no valid findings,
+  because a validated defect is a fact about the code that was read. In
+  evaluation, `qwen3:4b` once returned five valid auth findings together with a
+  negative verdict.
+
+**Partial-evidence handoff.** The RAG flow answers a question only with direct
+evidence, and its evidence check stays strict. When it finds none
+(`insufficient_evidence` or `uncertain`), the Supervisor hands the question to the
+Code Analysis Agent, which reads the related code and reports full, partial or no
+coverage. If that agent also finds nothing, the RAG abstention is what the user
+sees. Example: "How does the tasks API server store a task after createTask sends
+it?" returns the client call in `taskService.ts` with the gap "the server-side
+storage is not in this repository". Loosening the evidence check itself was tried
+first and rejected: on `gpt-oss-20b` it accepted a README note as evidence for
+Stripe in 2 of 4 runs, while the old check refused it 4 of 4 times.
 
 A file the user named explicitly is always in scope, so the model can't dismiss
 it.
@@ -139,16 +164,21 @@ source text. Runs are stored in `agent_runs` and can be reopened from the UI's
 ## Evaluation
 
 `dotnet run --project evaluation/RepoMind.Evaluation -- --mode agents --repository-id <id>`
-runs the ten labeled tasks in `evaluation/agents-tasktrail.json` and reports:
+runs the 19 labeled tasks in `evaluation/agents-tasktrail.json` and reports:
 
 - route accuracy
 - grounded tasks that cite an expected file, split into completed and partial
-- correct abstentions and refusals
+- correct abstentions and refusals, including absent topics asked as questions
+  (they must still be refused after the partial-evidence handoff)
+- partial-evidence tasks: status `partial`, an expected file cited, and at least
+  one named gap; an abstention there counts as an over-refusal
 - citations outside indexed line ranges
 - whether each run can be reloaded from the trace store
 - latency
 
-See the latest report in `evaluation/final-agents-report.md`.
+See `evaluation/final-agents-report.md`, and for the partial-evidence change
+`evaluation/partial-evidence-cloudflare-agents-report.md` (production model) and
+`evaluation/partial-evidence-agents-report.md` (local model).
 
 ## Known limitations
 
@@ -160,3 +190,8 @@ See the latest report in `evaluation/final-agents-report.md`.
   model wrote is correct.
 - With `qwen3:4b` on CPU, a model step takes roughly 15–60 s, and the
   planner/verifier can still make wrong relevance judgments.
+- A question phrased only about another system's internals ("what does the remote
+  server do internally when…") usually still abstains: the model judges that the
+  client code has nothing to cite. It names the gap, but cites no local lines.
+- Model output varies between runs: the same `guards.ts` review has returned two
+  findings in one run and none in another.

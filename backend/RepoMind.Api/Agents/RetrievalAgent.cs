@@ -148,7 +148,7 @@ public sealed class RetrievalAgent(AgentToolbox tools, IRagAnswerService rag, IA
         catch (Exception exception) when (exception is HttpRequestException or JsonException or CloudflareAiException)
         {
             state.Record(Name, "plan_targets", "fallback", clock,
-                $"model planner unavailable or invalid ({exception.GetType().Name}); {Describe(fallback)}");
+                $"model planner unavailable or invalid ({exception.GetType().Name}: {Shorten(exception.Message)}); {Describe(fallback)}");
         }
         return fallback;
     }
@@ -196,17 +196,27 @@ public sealed class RetrievalAgent(AgentToolbox tools, IRagAnswerService rag, IA
             relevant.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
             !root.TryGetProperty("paths", out var paths) || paths.ValueKind != JsonValueKind.Array)
             throw new JsonException("Invalid planner output.");
+        // Models sometimes drop the repository folder ("src/a.ts" for "App/src/a.ts") or add an
+        // extra path. Only an exact or unique-suffix match of an allowed path is accepted; anything
+        // else is ignored, so the model can never introduce a path of its own.
         var chosen = new List<string>();
         foreach (var value in paths.EnumerateArray())
         {
-            if (value.ValueKind != JsonValueKind.String || !candidates.Contains(value.GetString()!, StringComparer.Ordinal) ||
-                chosen.Contains(value.GetString()!) || chosen.Count >= AgentRouter.MaxTargets)
-                throw new JsonException("Planner chose an invalid path.");
-            chosen.Add(value.GetString()!);
+            if (value.ValueKind != JsonValueKind.String || chosen.Count >= AgentRouter.MaxTargets) continue;
+            if (AllowedPath(value.GetString()!, candidates) is { } path && !chosen.Contains(path)) chosen.Add(path);
         }
         if (relevant.GetBoolean() && chosen.Count == 0)
-            throw new JsonException("Planner marked the task relevant without choosing a path.");
+            throw new JsonException("Planner marked the task relevant without a valid allowed path.");
         return relevant.GetBoolean() ? new TargetPlan(true, chosen, "model") : new TargetPlan(false, [], "model");
+    }
+
+    private static string? AllowedPath(string value, IReadOnlyList<string> candidates)
+    {
+        var text = value.Trim().TrimStart('.', '/').Replace('\\', '/');
+        if (text.Length == 0) return null;
+        if (candidates.Contains(text, StringComparer.Ordinal)) return text;
+        var matches = candidates.Where(path => path.EndsWith("/" + text, StringComparison.Ordinal)).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
     }
 
     // Conservative rule plan: a file qualifies only when its search result contains a
@@ -227,6 +237,8 @@ public sealed class RetrievalAgent(AgentToolbox tools, IRagAnswerService rag, IA
             term.Length > 4 && term.EndsWith('s') &&
             Regex.IsMatch(text, $@"\b{Regex.Escape(term[..^1])}\b", RegexOptions.IgnoreCase);
     }
+
+    private static string Shorten(string message) => message.Length <= 100 ? message : message[..100] + "...";
 
     private static bool IsCode(string path) =>
         Path.GetExtension(path).ToLowerInvariant() is ".cs" or ".ts" or ".tsx" or ".js" or ".jsx" or ".vue";

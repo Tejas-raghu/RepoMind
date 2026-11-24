@@ -32,7 +32,7 @@ export const reviewRun: AgentRunResponse = {
     { step: 1, agent: 'supervisor', action: 'route', status: 'ok', durationMs: 2, detail: 'review' },
     { step: 2, agent: 'review', action: 'synthesize', status: 'timeout', durationMs: 150000, detail: 'model exceeded 150s' },
   ],
-  durationMs: 21000, model: 'qwen3:4b', answer: null, createdAt: '2026-11-09T10:00:00Z',
+  durationMs: 21000, model: 'qwen3:4b', answer: null, createdAt: '2026-11-09T10:00:00Z', gaps: [],
 }
 
 export const fileContent: IndexedFileContent = {
@@ -61,4 +61,16 @@ export const questionRun: AgentRunResponse = {
 export const abstainedQuestionRun: AgentRunResponse = {
   ...questionRun, runId: 9, task: 'Where is Stripe used?', status: 'abstained', summary: abstained.answer,
   findings: [], evidence: [], answer: abstained,
+}
+
+// The code shows the request and its local error handling, but not the remote server.
+// RAG found no direct evidence, so the Code Analysis Agent's partial result is shown.
+export const partialQuestionRun: AgentRunResponse = {
+  ...reviewRun, runId: 10, route: 'question', task: 'What happens when a request times out?', status: 'partial',
+  answer: null, gaps: ['What the remote API does internally on a timeout <b>x</b>'],
+}
+
+export const partialAnalysisRun: AgentRunResponse = {
+  ...reviewRun, runId: 11, route: 'analysis', status: 'partial', task: 'Explain the remote timeout behavior',
+  gaps: ['Remote server behavior'],
 }

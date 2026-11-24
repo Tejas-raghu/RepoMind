@@ -18,8 +18,14 @@ public sealed class ReviewAgent(AgentToolbox tools, IAgentModel model)
         "positives: confirm or ignore them, and do not repeat a hint unless you add a specific explanation. Each finding " +
         "needs a severity (low, medium or high), exactly one evidence ID and a line range inside that block, using the " +
         "numbers before '|'. Report only problems visible in the code; do not speculate about code you cannot see. An " +
-        "empty findings list is valid when the code shows no meaningful issue. Finding no problems is not a reason to " +
-        "set sufficient to false; set it to false only when the evidence is about a different subject than the task.";
+        "empty findings list is valid when the code shows no meaningful issue; finding no problems is not a reason for " +
+        "none. Coverage is full when the evidence covers the code the task asks to review. " + "Use partial only when the task itself explicitly asks about something outside the supplied code, such as a " +
+        "remote server, an external service or a file that was not supplied: then explain what the evidence does show " +
+        "in findings and name the asked-about part that is not shown in gaps. When the task asks what a remote server or " +
+        "external service does and the evidence shows the local code that calls it or handles its responses, that is " +
+        "partial, not none. Details the task did not ask about are not " +
+        "gaps; if the evidence answers what was asked, use full with an empty gaps list. Use none only when the " +
+        "evidence is about a different subject than the task. Never guess about what is not shown.";
 
     public async Task<SpecialistResult> RunAsync(AgentRunState state, CancellationToken cancellationToken)
     {
@@ -38,8 +44,8 @@ public sealed class ReviewAgent(AgentToolbox tools, IAgentModel model)
             cancellationToken);
 
         // A validated defect is a fact about the code that was read, so a contradictory
-        // "insufficient" flag does not discard it (observed live: five findings, flag false).
-        if (parsed is { Sufficient: false, Findings.Count: 0 } && !state.ExplicitTargets)
+        // "none" verdict does not discard it (observed live: five findings, flag false).
+        if (parsed is { Coverage: "none", Findings.Count: 0 } && !state.ExplicitTargets)
             return new SpecialistResult("abstained",
                 "The Review Agent judged that the gathered code does not relate to this task.", []);
         if (parsed is null)
@@ -47,12 +53,13 @@ public sealed class ReviewAgent(AgentToolbox tools, IAgentModel model)
                 $"The review model was unavailable, so only {ruleFindings.Count} deterministic rule finding(s) are shown.",
                 Ordered(ruleFindings));
         // A named file is always in scope; a model "unrelated" verdict there means "nothing to report".
-        var summary = !parsed.Sufficient && parsed.Findings.Count == 0
+        var summary = parsed.Coverage == "none" && parsed.Findings.Count == 0
             ? "The review model reported no issues for the requested file." :
             parsed.Findings.Count == 0 && ruleFindings.Count == 0
                 ? parsed.Summary + " No issues were reported for the reviewed lines."
                 : parsed.Summary;
-        return new SpecialistResult("completed", summary, Ordered([.. parsed.Findings, .. ruleFindings]));
+        return new SpecialistResult("completed", summary, Ordered([.. parsed.Findings, .. ruleFindings]))
+            { Gaps = parsed.Gaps };
     }
 
     private static IReadOnlyList<AgentFinding> Ordered(IEnumerable<AgentFinding> findings) =>

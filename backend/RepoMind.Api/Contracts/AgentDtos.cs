@@ -45,6 +45,8 @@ public sealed record AgentRunResponse(long RepositoryId, string Task, string Rou
     public double DurationMs { get; init; }
     public string? Model { get; init; }
     public RagAnswerResponse? Answer { get; init; }
+    // Parts of the task the gathered code does not establish (shown as "Not established").
+    public IReadOnlyList<string> Gaps { get; init; } = [];
     public DateTimeOffset? CreatedAt { get; init; }
 }
 

@@ -232,7 +232,8 @@ public sealed class CloudflareProviderTests
         Assert.Contains("/ai/run/@cf/openai/gpt-oss-20b", handler.Path);
         using var body = JsonDocument.Parse(handler.Body!);
         Assert.DoesNotContain("/no_think", body.RootElement.GetProperty("messages")[1].GetProperty("content").GetString());
-        Assert.Equal(1200, body.RootElement.GetProperty("max_tokens").GetInt32());
+        // gpt-oss cannot skip reasoning, so even a short planner call gets the larger cap.
+        Assert.Equal(4000, body.RootElement.GetProperty("max_tokens").GetInt32());
 
         var chat = new StubHandler(_ => Reply(new { success = true, result = new { response = "ok" } }));
         await new CloudflareLlmService(Client(chat, "@cf/google/gemma-4-26b-a4b-it")).ChatAsync("hi", CancellationToken.None);

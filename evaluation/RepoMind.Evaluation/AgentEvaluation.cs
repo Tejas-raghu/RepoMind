@@ -95,13 +95,18 @@ static class AgentEvaluation
             c.Start < 1 || c.End < c.Start || c.End > count);
         outcome.CitedPaths = citations.Select(c => c.Path).Distinct().ToArray();
         outcome.ModelFindings = run.GetProperty("findings").EnumerateArray().Count(f => f.GetProperty("origin").GetString() == "model");
+        outcome.Gaps = run.TryGetProperty("gaps", out var gaps) && gaps.ValueKind == JsonValueKind.Array ? gaps.GetArrayLength() : 0;
         outcome.Fallbacks = run.GetProperty("trace").EnumerateArray().Count(t =>
             t.GetProperty("status").GetString() is "fallback" or "timeout" or "failed");
         var task = outcome.Task;
         outcome.RouteCorrect = outcome.Route == task.ExpectedRoute;
+        // Partial-evidence tasks must keep the cited part (status partial, expected file cited)
+        // and name what the code does not establish; abstaining there is an over-refusal.
         outcome.Pass = outcome.RouteCorrect && outcome.InvalidCitations == 0 && (task.ExpectedStatus is not null
             ? outcome.Status == task.ExpectedStatus
-            : outcome.Status is "completed" or "partial" && outcome.CitedPaths.Any(task.ExpectedPaths!.Contains));
+            : task.ExpectGaps == true
+                ? outcome.Status == "partial" && outcome.Gaps > 0 && outcome.CitedPaths.Any(task.ExpectedPaths!.Contains)
+                : outcome.Status is "completed" or "partial" && outcome.CitedPaths.Any(task.ExpectedPaths!.Contains));
     }
 
     private static string Report(AgentFixture fixture, Arguments options, long repositoryId,
@@ -114,31 +119,37 @@ static class AgentEvaluation
         if (preflight is not null)
             return text.AppendLine($"**Fixture validation failed:** {Clean(preflight)}\n\nNo tasks were scored.").ToString();
 
-        var grounded = outcomes.Where(o => o.Task.ExpectedPaths is not null).ToArray();
+        var grounded = outcomes.Where(o => o.Task.ExpectedPaths is not null && o.Task.ExpectGaps != true).ToArray();
+        var partialTasks = outcomes.Where(o => o.Task.ExpectGaps == true).ToArray();
         var abstain = outcomes.Where(o => o.Task.ExpectedStatus == "abstained").ToArray();
         var refuse = outcomes.Where(o => o.Task.ExpectedStatus == "unsupported").ToArray();
         var times = outcomes.Where(o => o.Ms > 0).Select(o => o.Ms).Order().ToArray();
         text.AppendLine($"- Route accuracy: {outcomes.Count(o => o.RouteCorrect)}/{outcomes.Count}");
         text.AppendLine($"- Grounded tasks citing an expected file: {grounded.Count(o => o.Pass)}/{grounded.Length} " +
             $"(completed with validated model findings: {grounded.Count(o => o.Pass && o.Status == "completed")}; " +
-            $"partial deterministic fallback: {grounded.Count(o => o.Pass && o.Status == "partial")})");
+            $"partial (fallback or partial coverage): {grounded.Count(o => o.Pass && o.Status == "partial")})");
         text.AppendLine($"- Correct abstentions on absent topics: {abstain.Count(o => o.Pass)}/{abstain.Length}");
+        var overRefusals = partialTasks.Count(o => o.Status == "abstained");
+        if (partialTasks.Length > 0)
+            text.AppendLine($"- Partial-evidence tasks (status partial, expected file cited, gaps named): " +
+                $"{partialTasks.Count(o => o.Pass)}/{partialTasks.Length}; over-refusals: {overRefusals}");
         text.AppendLine($"- Correct refusals of side-effect tasks: {refuse.Count(o => o.Pass)}/{refuse.Length}");
         text.AppendLine($"- Citations outside indexed line ranges: {outcomes.Sum(o => o.InvalidCitations)} of {outcomes.Sum(o => o.Citations)}");
         text.AppendLine($"- Runs persisted and reloadable with the same status and trace: {outcomes.Count(o => o.Persisted)}/{outcomes.Count}");
         text.AppendLine($"- Runs with a fallback, timeout or failed step in the trace: {outcomes.Count(o => o.Fallbacks > 0)}");
         text.AppendLine($"- Request time: median {Percentile(times, 0.5)} ms, max {(times.Length == 0 ? "n/a" : times[^1].ToString("F0"))} ms");
         text.AppendLine($"- HTTP, timeout or parse failures: {outcomes.Count(o => o.Error is not null)}").AppendLine();
-        text.AppendLine("| Task | Expected | Route | Status | Cited files | Model findings | ms | Pass |");
-        text.AppendLine("|---|---|---|---|---|---:|---:|---|");
+        text.AppendLine("| Task | Expected | Route | Status | Cited files | Model findings | Gaps | ms | Pass |");
+        text.AppendLine("|---|---|---|---|---|---:|---:|---:|---|");
         foreach (var o in outcomes)
-            text.AppendLine($"| {Clean(o.Task.Task)} | {o.Task.ExpectedRoute} / {o.Task.ExpectedStatus ?? "grounded"} | " +
+            text.AppendLine($"| {Clean(o.Task.Task)} | {o.Task.ExpectedRoute} / {o.Task.ExpectedStatus ?? (o.Task.ExpectGaps == true ? "partial + gaps" : "grounded")} | " +
                 $"{o.Route ?? "—"} | {o.Status ?? Clean(o.Error ?? "—")} | {Clean(string.Join(", ", o.CitedPaths.Select(p => p.Split('/')[^1])))} | " +
-                $"{o.ModelFindings} | {o.Ms:F0} | {(o.Pass ? "yes" : "no")} |");
+                $"{o.ModelFindings} | {o.Gaps} | {o.Ms:F0} | {(o.Pass ? "yes" : "no")} |");
         text.AppendLine().AppendLine("A grounded pass requires the expected route, status `completed` or `partial`, at least one finding " +
-            "citing a labeled file, and every citation inside that file's indexed line range. `partial` means the model step " +
-            "failed and deterministic tool output was returned instead; the summary counts it separately. Abstention and refusal " +
-            "passes require the exact status. Citation validity proves provenance, not that every sentence of model prose is " +
+            "citing a labeled file, and every citation inside that file's indexed line range. `partial` means either the model step " +
+            "failed and deterministic tool output was returned, or the model reported partial coverage with gaps; the summary counts it separately. Abstention and refusal " +
+            "passes require the exact status. A partial-evidence pass requires status `partial`, a cited labeled file and at " +
+            "least one named gap. Citation validity proves provenance, not that every sentence of model prose is " +
             "correct. Ten tasks on one small sample are a smoke test, not a reliability estimate.");
         return text.ToString();
     }
@@ -149,7 +160,8 @@ static class AgentEvaluation
 }
 
 sealed record AgentFixture(string RepositoryName, string[] IndexedPaths, AgentTask[] Tasks);
-sealed record AgentTask(string Id, string Task, string ExpectedRoute, string[]? ExpectedPaths, string? ExpectedStatus);
+sealed record AgentTask(string Id, string Task, string ExpectedRoute, string[]? ExpectedPaths, string? ExpectedStatus,
+    bool? ExpectGaps = null);
 sealed class AgentOutcome(AgentTask task)
 {
     public AgentTask Task { get; } = task;
@@ -158,6 +170,7 @@ sealed class AgentOutcome(AgentTask task)
     public string? Error { get; set; }
     public double Ms { get; set; }
     public bool RouteCorrect { get; set; }
+    public int Gaps { get; set; }
     public bool Pass { get; set; }
     public bool Persisted { get; set; }
     public int Citations { get; set; }

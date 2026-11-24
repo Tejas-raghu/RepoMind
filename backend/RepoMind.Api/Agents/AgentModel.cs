@@ -94,8 +94,11 @@ public sealed class CloudflareAgentModel(CloudflareAiClient client) : IAgentMode
                     (request.AllowReasoning || !SupportsNoThink ? "" : NoThink) }
             },
             stream = false, temperature = 0.0,
+            // A model that cannot skip reasoning (gpt-oss) may spend over 1,200 tokens thinking
+            // before a short planner answer (observed: empty content). max_tokens is only a cap,
+            // so the larger floor costs nothing unless those tokens are actually generated.
             max_tokens = Math.Max(request.MaxOutputTokens,
-                request.AllowReasoning ? MinimumReasoningOutputTokens : MinimumOutputTokens)
+                request.AllowReasoning || !SupportsNoThink ? MinimumReasoningOutputTokens : MinimumOutputTokens)
         };
         for (var attempt = 0; attempt < 2; attempt++)
         {

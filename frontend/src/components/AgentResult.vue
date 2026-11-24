@@ -32,6 +32,13 @@ const answerLabels: Record<string, string> = {
 // Location questions run the verified RAG flow; show them as an answer with source
 // cards, as the original Ask panel did. Other routes show agent findings.
 const answer = computed(() => (props.run.route === 'question' ? props.run.answer : null))
+// What the code does not establish: shown as its own list so a partial answer never
+// reads as complete.
+const gaps = computed(() => props.run.gaps ?? [])
+// A question without direct evidence is handed to the Code Analysis Agent; its findings
+// replace the RAG answer, and the badge says so.
+const routeLabel = computed(() => props.run.route === 'question' && !props.run.answer
+  ? 'Retrieval → Code Analysis Agent' : routeLabels[props.run.route] ?? props.run.route)
 const statusLabel = computed(() => answer.value
   ? answerLabels[answer.value.status] ?? answer.value.status.replaceAll('_', ' ')
   : statusLabels[props.run.status] ?? props.run.status)
@@ -51,7 +58,7 @@ const shortPath = (path: string) => path.split('/').slice(-2).join('/')
           data-testid="agent-status">
           <span class="status-indicator" aria-hidden="true"></span>{{ statusLabel }}
         </span>
-        <span class="agent-route" data-testid="agent-route">{{ routeLabels[run.route] ?? run.route }}</span>
+        <span class="agent-route" data-testid="agent-route">{{ routeLabel }}</span>
       </div>
       <span class="result-model">{{ run.model ?? 'no model call' }} · {{ seconds }}s
         <template v-if="run.runId"> · run #{{ run.runId }}</template></span>
@@ -60,6 +67,10 @@ const shortPath = (path: string) => path.split('/').slice(-2).join('/')
     <div class="result-body">
       <h3>{{ heading }}</h3>
       <p data-testid="agent-summary">{{ answer ? answer.answer : run.summary }}</p>
+      <div v-if="gaps.length" class="gaps-box" data-testid="agent-gaps">
+        <strong>Not established by this code</strong>
+        <ul><li v-for="gap in gaps" :key="gap">{{ gap }}</li></ul>
+      </div>
     </div>
 
     <div v-if="answer && answer.sources.length" class="sources-section">

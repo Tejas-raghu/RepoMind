@@ -58,7 +58,7 @@ provider/model that indexed it; a mismatch returns HTTP 409.
 | `POST /api/repositories/{id}/search` | Day 7 vector search with cutoff |
 | `POST /api/repositories/{id}/hybrid/search` | Retrieval diagnostics (ranks and RRF scores) |
 | `POST /api/repositories/{id}/rag/context`, `/rag/verify`, `/rag/answer` | RAG pipeline stages |
-| `POST /api/repositories/{id}/agents/run` | `{ task }` → routed multi-agent run with findings, evidence, plan and trace |
+| `POST /api/repositories/{id}/agents/run` | `{ task }` → routed multi-agent run with findings, evidence, plan, trace and `gaps` (what the code does not establish; empty for a full answer) |
 | `GET /api/repositories/{id}/agents/runs[?limit=]` | Run history for that repository (up to 50) |
 | `GET /api/repositories/{id}/agents/runs/{runId}` | One stored run; 404 when the run belongs to another repository |
 

@@ -271,3 +271,32 @@
   - "How are protected routes secured?" answered in 7.4 s.
   - "Explain how overdue tasks are identified" (analysis) completed in 15.9 s.
 - **Latency:** the first two AI requests took 51 s and 22 s. The traces put nearly all of it in the Cloudflare model call (`rag_answer` 50.9 s, `synthesize` 22.2 s); RepoMind's own steps took under 0.5 s. Warm requests were 7–16 s. Separately, the Render free instance sleeps after about 15 idle minutes, and waking it takes about a minute.
+
+## Partial evidence: answer the provable part, name the rest (2026-11-24)
+
+- **Trigger:** a reader's challenge after the LinkedIn post. "When a request to the tasks API times out, what does the remote server do internally?" The code shows the request (`apiClient.ts:23`) and its local error handling, but not the server. The live site refused the whole question (runs #14 and #15): no hallucination, but the provable part was thrown away.
+- **Root cause:** both gates were yes/no. The RAG evidence check returned supported or insufficient, and the agents' synthesis returned `sufficient: true/false`.
+- **First attempt, rejected by measurement:** a "partial" verdict in the RAG evidence check.
+  - Locally it never fired.
+  - On the production model (`gpt-oss-20b`) it caused a regression. In an A/B test, "Where is Stripe payment processing implemented?" was refused by the old check 4/4 times, but accepted by the new one 2/4 times, citing a README test note.
+  - All RAG changes were reverted; the RAG evidence check is byte-for-byte the previous version.
+- **What shipped:**
+  - **Agents:** `coverage` is now `full | partial | none`, plus a `gaps` list. A legacy boolean is still parsed.
+  - **Partial coverage** returns status `partial` with the cited findings and a **Not established by this code** list. `none` still abstains, and any gap the model named is still shown.
+  - **Handoff:** when the RAG flow finds no direct evidence, the Supervisor hands the question to the Code Analysis Agent. If that agent also finds nothing, the RAG abstention is shown.
+  - **Planner tolerance:** a path that uniquely matches the end of an allowed path is accepted, and invalid extras are ignored instead of discarding the whole plan. Model-invented paths are still impossible. The trace now gives the real failure reason.
+  - **Cloudflare token cap:** `gpt-oss-20b` cannot skip reasoning, so every step gets the 4,000-token cap. Observed: the planner returned empty content at 1,200. `max_tokens` is only a cap.
+  - **Robustness:** an over-long agent summary is shortened at a sentence boundary instead of discarding validated findings. A coverage value is read case-insensitively.
+  - **UI:** a gaps box under the summary. A handed-off question shows the route "Retrieval → Code Analysis Agent".
+- **Evaluation:** 19 labeled agent tasks, up from 10. New tasks: 3 partial-evidence tasks, a client-side timeout question, and 5 absent topics asked as questions, which must still be refused after the handoff.
+  - **Production model, `gpt-oss-20b`** (`evaluation/partial-evidence-cloudflare-agents-report.md`): 18/19.
+    - Routing 19/19, grounded 6/6 (all with model findings), absent topics refused **7/7**, refusals 3/3, 0 of 23 citations out of range.
+    - Partial-evidence 2/3. The new tasks ("How does the tasks API server store a task after createTask sends it?" and "Explain what the tasks API server does internally when completeTask is called") return partial with gaps instead of abstaining.
+    - RAG evaluation unchanged (`evaluation/partial-evidence-cloudflare-rag-report.md`): Hit@1 5/5, grounded 5/5, abstentions 5/5, false acceptances 0/5.
+  - **Local model, `qwen3:4b`** (`evaluation/partial-evidence-agents-report.md`): 18/19, absent topics refused 7/7, 0 over-refusals, 0 of 18 citations out of range.
+- **Honest limits:**
+  - The exact remote-server phrasing still usually abstains on `gpt-oss-20b`. The model judges that the client code has nothing to cite, so it names the gap but cites no lines.
+  - Locally, the small planner sometimes reads the wrong files, and the small model occasionally flags a gap on a fully answerable task.
+  - The same `guards.ts` review returned no findings in one run and findings in the next, which is model variability.
+  - One evaluation label was corrected: "What happens when an API request from apiClient times out?" is fully answerable from the client code (no timeout set; `fetch` rejects and nothing catches it), so it is now a grounded task.
+- **Tests:** backend **243/243**. Frontend 5 contract tests + 16 component/app tests, and the build passed.

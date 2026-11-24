@@ -212,6 +212,91 @@ public sealed class AgentOrchestrationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Partial_coverage_keeps_cited_findings_names_the_gaps_and_persists_them()
+    {
+        var model = new ScriptedModel(
+            planner: _ => Json("""{"reason":"client","relevant":true,"paths":["src/services/apiClient.ts"]}"""),
+            synthesis: _ => Json("""
+                {"summary":"The client sends the request and handles failures locally.","findings":[
+                  {"title":"Request sent","detail":"Line 4.","evidenceId":"E1","startLine":4,"endLine":4}],
+                 "gaps":["What the remote API does internally on a timeout [source:9]"],"coverage":"partial"}
+                """));
+        var (supervisor, store) = Create(model);
+
+        var run = await supervisor.RunAsync(repositoryId,
+            "Explain what the remote API does when a request from apiClient times out", CancellationToken.None);
+
+        Assert.Equal("partial", run!.Status);
+        Assert.Contains(run.Findings, f => f.Title == "Request sent");
+        // Citation markers are stripped: a gap names missing evidence, not cited evidence.
+        Assert.Equal(["What the remote API does internally on a timeout"], run.Gaps);
+        Assert.Contains(run.Trace, t => t.Action == "synthesize" && t.Detail.Contains("coverage partial") && t.Detail.Contains("1 gaps"));
+        var stored = await store.GetAsync(repositoryId, run.RunId!.Value, CancellationToken.None);
+        Assert.Equal(run.Gaps, stored!.Gaps);
+    }
+
+    [Fact]
+    public async Task Coverage_none_abstains_even_with_described_code()
+    {
+        var model = new ScriptedModel(
+            planner: _ => Json("""{"reason":"guards","relevant":true,"paths":["src/router/guards.ts"]}"""),
+            synthesis: _ => Json("""
+                {"summary":"This is routing, not payments.","findings":[
+                  {"title":"Router guard","detail":"Line 3.","evidenceId":"E1","startLine":3,"endLine":3}],
+                 "gaps":["Payments"],"coverage":"none"}
+                """));
+        var (supervisor, _) = Create(model);
+
+        var run = await supervisor.RunAsync(repositoryId, "Explain how routes are protected", CancellationToken.None);
+
+        Assert.Equal("abstained", run!.Status);
+        Assert.Empty(run.Findings);
+        Assert.Equal(["Payments"], run.Gaps); // what is not established is still named
+    }
+
+    [Fact]
+    public async Task Question_without_direct_evidence_hands_off_and_keeps_the_partial_part()
+    {
+        var rag = new FakeRag(new RagAnswerResponse("insufficient_evidence", "No supplied source directly supports the request.",
+            [], null, null, null));
+        var model = new ScriptedModel(
+            planner: _ => Json("""{"reason":"client","relevant":true,"paths":["src/services/apiClient.ts"]}"""),
+            synthesis: _ => Json("""
+                {"summary":"The client sends the request with no timeout; failures throw locally.","findings":[
+                  {"title":"Request sent","detail":"Line 4.","evidenceId":"E1","startLine":4,"endLine":4}],
+                 "gaps":["What the remote server does internally on a timeout"],"coverage":"partial"}
+                """));
+        var (supervisor, store) = Create(model, rag: rag);
+
+        var run = await supervisor.RunAsync(repositoryId, "What happens when an API request times out?", CancellationToken.None);
+
+        Assert.Equal(("question", "partial"), (run!.Route, run.Status));
+        Assert.Null(run.Answer); // the shown result is the agent's partial answer, not the RAG abstention
+        Assert.Equal(["What the remote server does internally on a timeout"], run.Gaps);
+        Assert.Contains(run.Findings, f => f.Title == "Request sent");
+        Assert.Equal(["rag_answer", "handoff", "search_code", "plan_targets", "read_file", "handoff", "outline_file", "synthesize"],
+            run.Trace.Select(t => t.Action).Where(a => a is not ("list_files" or "route")).ToArray());
+        Assert.Equal(run.Gaps, (await store.GetAsync(repositoryId, run.RunId!.Value, CancellationToken.None))!.Gaps);
+    }
+
+    [Fact]
+    public async Task Question_about_an_absent_topic_still_abstains_after_the_handoff()
+    {
+        var rag = new FakeRag(new RagAnswerResponse("insufficient_evidence", "No supplied source directly supports the request.",
+            [], null, null, null));
+        var model = new ScriptedModel(planner: _ => Json("""{"reason":"none","relevant":false,"paths":[]}"""));
+        var (supervisor, _) = Create(model, rag: rag);
+
+        var run = await supervisor.RunAsync(repositoryId, "Where is Stripe payment processing implemented?", CancellationToken.None);
+
+        Assert.Equal(("question", "abstained"), (run!.Route, run.Status));
+        Assert.Equal("insufficient_evidence", run.Answer?.Status); // the RAG abstention is what is shown
+        Assert.Empty(run.Findings);
+        Assert.Empty(run.Gaps);
+        Assert.Equal(0, model.SynthesisCalls);
+    }
+
+    [Fact]
     public async Task Validated_findings_survive_a_contradictory_insufficiency_flag()
     {
         var model = new ScriptedModel(
@@ -279,13 +364,17 @@ public sealed class AgentOrchestrationIntegrationTests : IAsyncLifetime
             : [];
         var rag = new FakeRag(new RagAnswerResponse(ragStatus, "Answer [source:5]", sources, "qwen3:4b", 10, 5)
             { Summary = "The client sets the header." });
-        var (supervisor, _) = Create(new ScriptedModel(), rag: rag);
+        // A RAG abstention hands off to the analysis agent; here it finds nothing either.
+        var model = new ScriptedModel(
+            planner: _ => Json("""{"reason":"none","relevant":false,"paths":[]}"""),
+            synthesis: _ => Json("""{"summary":"Not related.","findings":[],"gaps":[],"coverage":"none"}"""));
+        var (supervisor, _) = Create(model, rag: rag);
 
         var run = await supervisor.RunAsync(repositoryId, "Where is the Bearer token added?", CancellationToken.None);
 
         Assert.Equal(("question", expected), (run!.Route, run.Status));
         Assert.Equal(ragStatus, run.Answer?.Status);
-        Assert.Equal(sources.Length, run.Evidence.Count);
+        if (ragStatus == "answered") Assert.Equal(sources.Length, run.Evidence.Count);
         Assert.Equal(ragStatus == "answered" ? 1 : 0, run.Findings.Count);
         Assert.Equal(3, rag.TopK);
     }

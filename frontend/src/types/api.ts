@@ -113,6 +113,8 @@ export interface AgentRunResponse {
   model: string | null
   answer: RagAnswerResponse | null
   createdAt: string | null
+  // What the gathered code does not establish; empty for a full answer.
+  gaps: string[]
 }
 export interface AgentRunSummary {
   runId: number

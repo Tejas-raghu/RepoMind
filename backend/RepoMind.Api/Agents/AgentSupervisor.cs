@@ -10,7 +10,8 @@ namespace RepoMind.Api.Agents;
 //   2. hand the shared state to the Retrieval Agent for evidence;
 //   3. hand that evidence to the Code Analysis or Review Agent;
 //   4. turn the outcome into a status, enforce the run deadline, persist the trace.
-// Status values: completed, partial (deterministic fallback used), abstained
+// Status values: completed, partial (deterministic fallback used, or only part of the task
+// is established by the code; the rest is listed in Gaps), abstained
 // (no relevant evidence), unsupported (refused by the router), failed.
 public sealed class AgentSupervisor(RepositorySourceService sources, AgentToolbox tools,
     RetrievalAgent retrieval, CodeAnalysisAgent analysis, ReviewAgent review, AgentRunStore store,
@@ -41,7 +42,7 @@ public sealed class AgentSupervisor(RepositorySourceService sources, AgentToolbo
             outcome = decision.Route switch
             {
                 AgentRoute.Unsupported => new SpecialistResult("unsupported", decision.Reason, []),
-                AgentRoute.Question => FromAnswer(answer = await retrieval.AnswerAsync(state, deadline.Token)),
+                AgentRoute.Question => await AnswerAsync(state, decision, a => answer = a, deadline.Token),
                 _ => await RunSpecialistAsync(state, decision, deadline.Token)
             };
         }
@@ -59,6 +60,7 @@ public sealed class AgentSupervisor(RepositorySourceService sources, AgentToolbo
             RouteReason = decision.Reason,
             Model = answer?.Model ?? state.Model,
             Answer = answer,
+            Gaps = outcome.Gaps,
             DurationMs = Math.Round(elapsed.Elapsed.TotalMilliseconds, 1)
         };
         return await PersistAsync(response, state, cancellationToken);
@@ -87,11 +89,34 @@ public sealed class AgentSupervisor(RepositorySourceService sources, AgentToolbo
         return result;
     }
 
+    // The RAG flow answers only with direct evidence. When it finds none, the question may
+    // still be partly answerable ("what happens when this request times out?": the request
+    // and its error handling are in the code, the remote server is not). The Code Analysis
+    // Agent then reads the code and reports full, partial (with gaps) or no coverage. Absent
+    // topics still abstain there, so this never turns a refusal into a guess.
+    private async Task<SpecialistResult> AnswerAsync(AgentRunState state, RouteDecision decision,
+        Action<RagAnswerResponse?> keep, CancellationToken cancellationToken)
+    {
+        var answer = await retrieval.AnswerAsync(state, cancellationToken);
+        keep(answer);
+        var result = FromAnswer(answer);
+        if (answer?.Status is not ("insufficient_evidence" or "uncertain")) return result;
+
+        state.Record(Name, "handoff", "ok", Stopwatch.StartNew(),
+            $"{RetrievalAgent.Name} -> {CodeAnalysisAgent.Name}: no direct evidence for a full answer ({answer.Status}); " +
+            "checking the code for a partial answer");
+        var analysis = await RunSpecialistAsync(state, decision with { Route = AgentRoute.Analysis }, cancellationToken);
+        if (analysis.Status is not ("completed" or "partial") || analysis.Findings.Count == 0) return result;
+        keep(null); // the shown result is the agent's, not the abstained RAG answer
+        return analysis;
+    }
+
     private static SpecialistResult FromAnswer(RagAnswerResponse? answer)
     {
         if (answer is null)
             return new SpecialistResult("failed",
                 "The Retrieval Agent could not complete the RAG answer flow. See the trace for details.", []);
+        // An answer with gaps is partial: the cited part is established, the rest is named.
         var status = answer.Status switch
         {
             "answered" => "completed",
@@ -113,6 +138,8 @@ public sealed class AgentSupervisor(RepositorySourceService sources, AgentToolbo
             case AgentRoute.Question:
                 state.AddPlan(RetrievalAgent.Name, "rag_answer",
                     "Hybrid search, evidence verification, then a grounded answer with validated citations.");
+                state.AddPlan(CodeAnalysisAgent.Name, "synthesize",
+                    "Only if no direct evidence is found: read the related code and report what it does and does not establish.");
                 return;
             case AgentRoute.Unsupported:
                 return;

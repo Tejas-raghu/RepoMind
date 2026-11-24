@@ -91,8 +91,22 @@ public sealed class AgentToolLogicTests
         Assert.False(RetrievalAgent.ParsePlan(Parse("""{"reason":"r","relevant":false,"paths":["src/a.ts"]}"""), allowed).Relevant);
         Assert.Throws<JsonException>(() => RetrievalAgent.ParsePlan(Parse("""{"reason":"r","relevant":true,"paths":["../secret.ts"]}"""), allowed));
         Assert.Throws<JsonException>(() => RetrievalAgent.ParsePlan(Parse("""{"reason":"r","relevant":true,"paths":[]}"""), allowed));
-        Assert.Throws<JsonException>(() => RetrievalAgent.ParsePlan(Parse("""{"reason":"r","relevant":true,"paths":["src/a.ts","src/a.ts"]}"""), allowed));
+        // Duplicates and unknown extras are ignored; only allowed paths survive.
+        Assert.Equal(new[] { "src/a.ts" }, RetrievalAgent.ParsePlan(
+            Parse("""{"reason":"r","relevant":true,"paths":["src/a.ts","src/a.ts","../x.ts"]}"""), allowed).Paths);
         Assert.Throws<JsonException>(() => RetrievalAgent.ParsePlan(Parse("""{"relevant":"yes","paths":[]}"""), allowed));
+    }
+
+    [Fact]
+    public void Planner_path_without_the_repository_folder_maps_to_one_allowed_path()
+    {
+        string[] allowed = ["App/src/services/apiClient.ts", "App/src/services/taskService.ts", "App/README.md"];
+        var plan = RetrievalAgent.ParsePlan(Parse("""{"reason":"r","relevant":true,"paths":["src/services/apiClient.ts"]}"""), allowed);
+        Assert.Equal(new[] { "App/src/services/apiClient.ts" }, plan.Paths);
+        // A suffix must name exactly one allowed file; a bare folder or ambiguous name is not accepted.
+        string[] twins = ["A/src/x.ts", "B/src/x.ts"];
+        Assert.Throws<JsonException>(() => RetrievalAgent.ParsePlan(Parse("""{"reason":"r","relevant":true,"paths":["src/x.ts"]}"""), twins));
+        Assert.Throws<JsonException>(() => RetrievalAgent.ParsePlan(Parse("""{"reason":"r","relevant":true,"paths":["/etc/passwd"]}"""), allowed));
     }
 
     [Fact]
@@ -154,9 +168,12 @@ public sealed class AgentToolLogicTests
         Assert.Throws<JsonException>(() => AgentSynthesis.Parse(Parse("""{"summary":"x","findings":[]}"""), evidence, false));
         Assert.Throws<JsonException>(() => AgentSynthesis.Parse(Parse("""{"sufficient":true,"summary":"  ","findings":[]}"""), evidence, false));
         Assert.Throws<JsonException>(() => AgentSynthesis.Parse(Parse("[]"), evidence, false));
+        // An over-long summary is shortened, not rejected, so validated findings survive.
         var longSummary = new string('x', AgentSynthesis.MaxSummaryLength + 1);
-        Assert.Throws<JsonException>(() => AgentSynthesis.Parse(
-            Parse($$"""{"sufficient":true,"summary":"{{longSummary}}","findings":[]}"""), evidence, false));
+        var shortened = AgentSynthesis.Parse(
+            Parse($$"""{"sufficient":true,"summary":"{{longSummary}}","findings":[]}"""), evidence, false);
+        Assert.Equal(AgentSynthesis.MaxSummaryLength, shortened.Summary.Length);
+        Assert.EndsWith("…", shortened.Summary);
     }
 
     [Fact]

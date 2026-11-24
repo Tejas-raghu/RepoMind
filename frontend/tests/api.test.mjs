@@ -70,6 +70,7 @@ const run = {
   evidence: [{ id: 'E1', filePath: 'src/a.ts', startLine: 1, endLine: 9, content: '<b>x</b>', source: 'read_file' }],
   plan: [{ step: 1, agent: 'supervisor', action: 'route', description: 'd' }],
   trace: [{ step: 1, agent: 'supervisor', action: 'route', status: 'ok', durationMs: 1, detail: 'd' }],
+  gaps: [],
 }
 
 test('validates agent runs, history and system info', async () => {
@@ -83,6 +84,15 @@ test('validates agent runs, history and system info', async () => {
   await assert.rejects(api.getAgentRun(38, 8), /unexpected agent run/)
   await assert.rejects(api.runAgent(39, 'x'), /unexpected agent result/)
   reply({ ...run, findings: [{ ...run.findings[0], citations: [{ filePath: 'src/a.ts', startLine: 5, endLine: 2 }] }] })
+  await assert.rejects(api.runAgent(38, 'x'), /unexpected agent result/)
+  reply({ ...run, gaps: ['Remote server behavior'] })
+  assert.deepEqual((await api.runAgent(38, 'x')).gaps, ['Remote server behavior'])
+  const { gaps: _omitted, ...older } = run
+  reply(older)
+  assert.deepEqual((await api.runAgent(38, 'x')).gaps, [])
+  reply({ ...run, gaps: 'not a list' })
+  await assert.rejects(api.runAgent(38, 'x'), /unexpected agent result/)
+  reply({ ...run, gaps: [5] })
   await assert.rejects(api.runAgent(38, 'x'), /unexpected agent result/)
   reply({ ...run, status: 'done' })
   await assert.rejects(api.runAgent(38, 'x'), /unexpected agent result/)

@@ -84,6 +84,10 @@ export async function uploadRepository(file: File, signal?: AbortSignal): Promis
   return body as unknown as RepositoryUploadResponse
 }
 
+// Gaps are plain text shown as escaped list items; older responses omit them.
+const optionalGaps = (value: unknown) => value === undefined ||
+  (Array.isArray(value) && value.length <= 5 && value.every((gap) => typeof gap === 'string'))
+
 function validAnswer(body: unknown): body is RagAnswerResponse {
   return !(!object(body) || typeof body.status !== 'string' || !answerStatuses.has(body.status) ||
     typeof body.answer !== 'string' ||
@@ -172,7 +176,7 @@ function validAgentRun(body: unknown): body is AgentRunResponse {
     Array.isArray(body.trace) && body.trace.every((step) => object(step) && positiveId(step.step) &&
       typeof step.agent === 'string' && typeof step.action === 'string' && typeof step.status === 'string' &&
       optionalNumber(step.durationMs) && typeof step.detail === 'string') &&
-    (body.answer === null || body.answer === undefined || validAnswer(body.answer))
+    (body.answer === null || body.answer === undefined || validAnswer(body.answer)) && optionalGaps(body.gaps)
 }
 
 function normalizeRun(body: AgentRunResponse): AgentRunResponse {
@@ -180,6 +184,7 @@ function normalizeRun(body: AgentRunResponse): AgentRunResponse {
     ...body,
     answer: body.answer ?? null,
     createdAt: body.createdAt ?? null,
+    gaps: body.gaps ?? [],
     findings: body.findings.map((finding) => ({ ...finding, ruleId: finding.ruleId ?? null })),
   }
 }

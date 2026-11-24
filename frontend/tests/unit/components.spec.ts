@@ -4,7 +4,7 @@ import AgentPanel from '../../src/components/AgentPanel.vue'
 import AgentResult from '../../src/components/AgentResult.vue'
 import RepositorySelector from '../../src/components/RepositorySelector.vue'
 import RepositoryUpload from '../../src/components/RepositoryUpload.vue'
-import { abstainedQuestionRun, answered, questionRun, reviewRun } from './fixtures'
+import { abstainedQuestionRun, answered, partialAnalysisRun, partialQuestionRun, questionRun, reviewRun } from './fixtures'
 
 const info = { provider: 'ollama', embeddingModel: 'embeddinggemma', chatModel: 'qwen3:4b',
   rerankingEnabled: false, agentModelPlanning: true }
@@ -66,6 +66,25 @@ describe('AgentResult', () => {
     expect(wrapper.find('.trace-timeout').text()).toContain('model exceeded 150s')
     await findings[0].find('.citation-button').trigger('click')
     expect(wrapper.emitted('navigate')?.[0]?.[0]).toEqual(reviewRun.findings[0].citations[0])
+  })
+
+  it('shows what the code does not establish for partial answers and agent results', () => {
+    const question = mount(AgentResult, { props: { run: partialQuestionRun } })
+    expect(question.find('[data-testid="agent-status"]').text()).toContain('Partial result')
+    expect(question.find('[data-testid="agent-route"]').text()).toBe('Retrieval → Code Analysis Agent')
+    const gaps = question.find('[data-testid="agent-gaps"]')
+    expect(gaps.text()).toContain('Not established by this code')
+    expect(gaps.text()).toContain('What the remote API does internally on a timeout <b>x</b>')
+    expect(gaps.find('b').exists()).toBe(false)
+    expect(question.findAll('[data-testid="agent-finding"]').length).toBeGreaterThan(0)
+
+    const analysis = mount(AgentResult, { props: { run: partialAnalysisRun } })
+    expect(analysis.find('[data-testid="agent-status"]').text()).toContain('Partial result')
+    expect(analysis.find('[data-testid="agent-gaps"]').text()).toContain('Remote server behavior')
+
+    const full = mount(AgentResult, { props: { run: questionRun } })
+    expect(full.find('[data-testid="agent-gaps"]').exists()).toBe(false)
+    expect(full.find('[data-testid="agent-status"]').text()).toContain('Answer ready')
   })
 
   it('labels partial and unsupported results honestly', () => {
