@@ -5,6 +5,8 @@
 | Backend unit | Business logic: chunking, ZIP rules, redaction, RRF, routing, outline/rule tools, planner and synthesis validation, provider parsing | HTTP handlers for provider responses | `dotnet test tests/RepoMind.Api.Tests` |
 | Backend DB integration | PostgreSQL + pgvector, SQL, transactions, repository isolation, agent tools, orchestration and trace storage | Embedding and model providers (deterministic) | same command (needs `docker compose up -d db`) |
 | Backend HTTP integration (`ApiIntegrationTests`) | The full ASP.NET Core pipeline through `WebApplicationFactory`, plus PostgreSQL | AI providers only | same command |
+| Hosted demo (`PublicDemoTests`) | Health check, static UI with cache headers, security headers, hidden learning endpoints, per-IP and daily rate limits | AI providers only | same command |
+| Container smoke test | The real Docker image in hosted mode against local PostgreSQL | Cloudflare credentials (dummy; no AI call) | see [deployment.md](deployment.md) |
 | Frontend API contract | Response validation in `repomindApi.ts` | `fetch` | `cd frontend; npm test` |
 | Frontend components and app (`tests/unit`) | Vue components, `App.vue` state, cancellation, citation navigation | HTTP backend, syntax highlighter | `cd frontend; npm test` |
 | Browser E2E (`tests/e2e`) | Chrome → Vite → API → PostgreSQL → Ollama. Nothing is mocked. | — | see below |

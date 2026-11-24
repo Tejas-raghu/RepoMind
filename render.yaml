@@ -1,0 +1,19 @@
+# Render Blueprint for the free public demo (see docs/deployment.md).
+# Secrets are marked sync: false, so Render asks for them and they never live in Git.
+services:
+  - type: web
+    name: repomind
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: ConnectionStrings__RepoMind
+        sync: false
+      - key: Cloudflare__AccountId
+        sync: false
+      - key: Cloudflare__ApiToken
+        sync: false

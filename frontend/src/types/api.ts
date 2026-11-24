@@ -11,6 +11,8 @@ export interface SystemInfo {
   chatModel: string
   rerankingEnabled: boolean
   agentModelPlanning: boolean
+  // True on the hosted public demo (rate-limited, uploads visible to every visitor).
+  publicDemo?: boolean
 }
 
 export interface RepositoryUploadResponse {

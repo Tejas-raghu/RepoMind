@@ -17,7 +17,7 @@ namespace RepoMind.Api.Tests;
 // DI) against the real local PostgreSQL + pgvector database. Only the AI
 // providers are replaced with deterministic fakes; live-model behavior is
 // covered separately by the end-to-end run and the evaluation harness.
-public sealed class RepoMindApiFactory : WebApplicationFactory<Program>
+public class RepoMindApiFactory : WebApplicationFactory<Program>
 {
     public StubEmbeddings Embeddings { get; } = new();
 

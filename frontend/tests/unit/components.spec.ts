@@ -152,4 +152,11 @@ describe('RepositoryUpload', () => {
       result: { repositoryId: 9, status: 'completed', filesIndexed: 2, chunksCreated: 3, filesSkipped: 1, secretsRedacted: 2 } } })
     expect(done.text()).toContain('2 secret value(s) redacted')
   })
+
+  it('warns public-demo visitors that uploads are visible to everyone', () => {
+    const local = mount(RepositoryUpload, { props: { uploading: false, error: '', result: null } })
+    expect(local.find('[data-testid="demo-notice"]').exists()).toBe(false)
+    const demo = mount(RepositoryUpload, { props: { uploading: false, error: '', result: null, publicDemo: true } })
+    expect(demo.find('[data-testid="demo-notice"]').text()).toContain('every visitor can see uploaded code')
+  })
 })

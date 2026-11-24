@@ -1,0 +1,20 @@
+# Keep the build context small and free of local secrets and data.
+**/bin/
+**/obj/
+**/node_modules/
+**/.env*
+!frontend/.env.example
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+.git/
+.vs/
+.idea/
+.local-service-logs/
+docs/
+evaluation/
+tests/
+database/
+*.md
+*.pdf
+*.zip

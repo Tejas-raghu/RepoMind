@@ -98,6 +98,8 @@ Repository text is always rendered as escaped text.
 | Section | Defaults and notes |
 |---|---|
 | `Ai:Provider` | `ollama` (default) or `cloudflare` |
+| `Demo:Enabled` | Off by default. The hosted image turns it on (`appsettings.Hosted.json`): per-IP and shared daily limits on `/agents/run` and uploads (HTTP 429), learning endpoints return 404, and the UI shows an upload privacy notice. Limits: `Demo:AsksPerIpPerHour`, `Demo:AsksPerDay`, `Demo:UploadsPerIpPerDay`, `Demo:UploadsPerDay`. See [deployment.md](deployment.md). |
+| `Demo:BehindProxy` | Reads the client IP from `X-Forwarded-For` (Render's proxy). |
 | `Cloudflare:ChatModel` | Default `@cf/openai/gpt-oss-20b`. Workers AI retires models (the original Qwen3 30B chat model began returning HTTP 410 on 2026-11-20), so the model name is configuration, not code. |
 | `Reranking:Enabled` | `false`. Local LLM reranking timed out in every recorded run and caused verification to fail too, so it is opt-in. |
 | `EvidenceVerification:TimeoutSeconds` | `120`. The measured average verifier time was about 50 s, so the previous 60 s limit failed often. |

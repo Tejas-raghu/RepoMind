@@ -30,7 +30,7 @@ const emit = defineEmits<{
     </div>
     <RepositorySelector :repositories="repositories" :selected-id="selectedId" :system-info="systemInfo" :loading="loading"
       :error="listError" @refresh="emit('refresh')" @select="emit('select', $event)" />
-    <RepositoryUpload :uploading="uploading" :error="uploadError" :result="uploadResult"
+    <RepositoryUpload :uploading="uploading" :public-demo="systemInfo?.publicDemo === true" :error="uploadError" :result="uploadResult"
       @upload="emit('upload', $event)" />
   </section>
 </template>

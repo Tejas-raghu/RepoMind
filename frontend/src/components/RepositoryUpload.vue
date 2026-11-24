@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import type { RepositoryUploadResponse } from '../types/api'
 
-defineProps<{ uploading: boolean; error: string; result: RepositoryUploadResponse | null }>()
+defineProps<{ uploading: boolean; error: string; result: RepositoryUploadResponse | null; publicDemo?: boolean }>()
 const emit = defineEmits<{ upload: [file: File] }>()
 const file = ref<File | null>(null)
 const input = ref<HTMLInputElement | null>(null)
@@ -39,6 +39,10 @@ defineExpose({ clearFile })
 
 <template>
   <div class="divider"><span>ADD A REPOSITORY</span></div>
+  <p v-if="publicDemo" class="demo-notice" data-testid="demo-notice">
+    Public demo: every visitor can see uploaded code, and usage is rate-limited.
+    Upload only public or sample code, never private or company code.
+  </p>
   <form class="upload-form" @submit.prevent="submit">
     <label class="upload-drop" for="repository-file">
       <span class="upload-icon" aria-hidden="true">↑</span>
@@ -56,7 +60,7 @@ defineExpose({ clearFile })
       <span v-if="!uploading" aria-hidden="true">↗</span>
     </button>
     <p v-if="uploading" class="field-message" role="status">
-      Embedding source files locally. Larger repositories can take several minutes.
+      Embedding source files. Larger repositories can take several minutes.
     </p>
   </form>
   <div v-if="result" class="upload-success" role="status">

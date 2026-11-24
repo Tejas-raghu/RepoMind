@@ -4,6 +4,7 @@ using Npgsql;
 using Pgvector.Npgsql;
 using RepoMind.Api.Agents;
 using RepoMind.Api.Contracts;
+using RepoMind.Api.Hosting;
 using RepoMind.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,6 +14,9 @@ builder.Logging.AddConsole();
 
 builder.Services.Configure<FormOptions>(options =>
     options.MultipartBodyLengthLimit = RepositoryZipReader.MaxUploadBytes + 256 * 1024);
+
+// Off locally; the hosted deployment turns it on (appsettings.Hosted.json).
+builder.Services.AddPublicDemo();
 
 var aiProvider = builder.Configuration["Ai:Provider"] ?? "ollama";
 if (aiProvider == "cloudflare")
@@ -75,8 +79,9 @@ else if (aiProvider == "ollama")
 else throw new InvalidOperationException("Ai:Provider must be ollama or cloudflare.");
 builder.Services.AddSingleton(_ =>
 {
-    var connectionString = builder.Configuration.GetConnectionString("RepoMind")
-        ?? throw new InvalidOperationException("ConnectionStrings:RepoMind is required.");
+    var connectionString = builder.Configuration.GetConnectionString("RepoMind");
+    if (string.IsNullOrWhiteSpace(connectionString))
+        throw new InvalidOperationException("ConnectionStrings:RepoMind is required.");
     var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
     dataSourceBuilder.UseVector();
     return dataSourceBuilder.Build();
@@ -101,6 +106,7 @@ builder.Services.AddScoped<AgentRunStore>();
 builder.Services.AddScoped<AgentSupervisor>();
 
 var app = builder.Build();
+app.UsePublicDemo();
 app.Use(async (context, next) =>
 {
     try { await next(context); }
@@ -117,6 +123,26 @@ app.Use(async (context, next) =>
     }
 });
 
+// The Docker image puts the built Vue app in wwwroot, so one container serves UI and API
+// from the same origin (no CORS). Locally there is no wwwroot and Vite serves the UI.
+if (Directory.Exists(app.Environment.WebRootPath))
+{
+    app.UseDefaultFiles();
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        // Vite file names under /assets contain a content hash, so they never change.
+        OnPrepareResponse = file => file.Context.Response.Headers.CacheControl =
+            file.Context.Request.Path.StartsWithSegments("/assets") ? "public, max-age=31536000, immutable" : "no-cache"
+    });
+}
+
+// Liveness only: no database or AI call, so platform health checks cost nothing.
+app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+// Learning endpoints from Days 2-10. The UI does not use them; the public demo hides them
+// because each one is another way to spend AI quota.
+var lab = app.MapGroup(string.Empty).WithLabOnly();
+
 app.MapGet("/api/system/info", (IConfiguration configuration) =>
 {
     var cloudflare = configuration["Ai:Provider"] == "cloudflare";
@@ -126,10 +152,11 @@ app.MapGet("/api/system/info", (IConfiguration configuration) =>
         cloudflare ? CloudflareAiClient.ChatModelFrom(configuration) : configuration["Ollama:ChatModel"] ?? "",
         configuration.GetValue<bool>("Reranking:Enabled") &&
             (!cloudflare || configuration.GetValue<bool>("Cloudflare:RerankingEnabled")),
-        AgentOptions.From(configuration).ModelPlanning));
+        AgentOptions.From(configuration).ModelPlanning,
+        PublicDemoOptions.From(configuration).Enabled));
 });
 
-app.MapPost("/api/llm/chat", async (
+lab.MapPost("/api/llm/chat", async (
     LlmChatRequest request,
     ILlmService service,
     ILogger<Program> logger,
@@ -161,7 +188,7 @@ app.MapPost("/api/llm/chat", async (
     }
 });
 
-app.MapPost("/api/embeddings", async (
+lab.MapPost("/api/embeddings", async (
     EmbeddingRequest request,
     IEmbeddingService service,
     ILogger<Program> logger,
@@ -198,7 +225,7 @@ app.MapPost("/api/embeddings", async (
     }
 });
 
-app.MapPost("/api/embeddings/store", async (
+lab.MapPost("/api/embeddings/store", async (
     EmbeddingRequest request,
     IEmbeddingService service,
     EmbeddingStore store,
@@ -244,7 +271,7 @@ app.MapPost("/api/embeddings/store", async (
     }
 });
 
-app.MapPost("/api/embeddings/search", async (
+lab.MapPost("/api/embeddings/search", async (
     EmbeddingRequest request,
     IEmbeddingService service,
     EmbeddingStore store,
@@ -429,9 +456,9 @@ app.MapPost("/api/repositories/upload", async (
     {
         return Results.Problem("Repository upload timed out.", statusCode: 504);
     }
-});
+}).WithDemoBudget(DemoBudget.Upload);
 
-app.MapPost("/api/repositories/{repositoryId}/search", async (
+lab.MapPost("/api/repositories/{repositoryId}/search", async (
     string repositoryId,
     RepositorySearchRequest request,
     IEmbeddingService embeddings,
@@ -482,7 +509,7 @@ app.MapPost("/api/repositories/{repositoryId}/search", async (
     }
 });
 
-app.MapPost("/api/repositories/{repositoryId}/rag/context", async (
+lab.MapPost("/api/repositories/{repositoryId}/rag/context", async (
     string repositoryId,
     RagContextRequest request,
     IRagContextBuilder builder,
@@ -526,7 +553,7 @@ app.MapPost("/api/repositories/{repositoryId}/rag/context", async (
     }
 });
 
-app.MapPost("/api/repositories/{repositoryId}/hybrid/search", async (
+lab.MapPost("/api/repositories/{repositoryId}/hybrid/search", async (
     string repositoryId,
     HybridSearchRequest request,
     HybridSearchService search,
@@ -570,7 +597,7 @@ app.MapPost("/api/repositories/{repositoryId}/hybrid/search", async (
     }
 });
 
-app.MapPost("/api/repositories/{repositoryId}/rag/verify", async (
+lab.MapPost("/api/repositories/{repositoryId}/rag/verify", async (
     string repositoryId,
     EvidenceVerificationRequest request,
     RagEvidenceVerifier verifier,
@@ -614,7 +641,7 @@ app.MapPost("/api/repositories/{repositoryId}/rag/verify", async (
     }
 });
 
-app.MapPost("/api/repositories/{repositoryId}/rag/answer", async (
+lab.MapPost("/api/repositories/{repositoryId}/rag/answer", async (
     string repositoryId,
     RagAnswerRequest request,
     IRagAnswerService answerService,
@@ -685,7 +712,7 @@ app.MapPost("/api/repositories/{repositoryId}/agents/run", async (
         logger.LogWarning("Agent run could not reach PostgreSQL.");
         return Results.Problem("PostgreSQL is unavailable or the Day 6 tables are missing.", statusCode: 503);
     }
-});
+}).WithDemoBudget(DemoBudget.Ask);
 
 app.MapGet("/api/repositories/{repositoryId}/agents/runs", async (
     string repositoryId, int? limit, RepositorySourceService sources, AgentRunStore store,

@@ -237,3 +237,19 @@
   - The app test asserts that the UI calls only `/agents/run`.
   - Browser E2E against a Cloudflare-mode API: **8/8 passed in 41.5 s**. The history now lists all four runs, questions included.
 - Tooling note: Vitest on Windows failed with "failed to find the runner" when started from a lowercase `c:\` working directory, because two copies of its module were loaded. Running from `C:\` fixed it; the tests were not the problem.
+
+## Deployment preparation: free public demo (2026-11-24)
+
+- **Target:** one Docker container on Render (free), Neon Postgres + pgvector (free), and Cloudflare Workers AI (free allowance). Ollama stays the local default. Step-by-step guide: `docs/deployment.md`.
+- **One container:** the API serves the built Vue app from `wwwroot`, so UI and API share one origin and need no CORS. Hashed `/assets` files are cached for a year; `index.html` uses `no-cache`.
+- **Public-demo protection** (`Demo:Enabled`, on only in the hosted image via `appsettings.Hosted.json`):
+  - Asks and uploads pass a per-IP limit, then a shared daily cap: 20 asks per IP per hour, 150 asks per day, 5 uploads per IP per day, 30 uploads per day. The per-IP limiter runs first, so one visitor hitting their limit does not use up the shared cap.
+  - Over the limit, the API returns HTTP 429 with `Retry-After` and a readable message, which the UI shows.
+  - The Days 2–10 learning endpoints return 404 in the demo.
+  - The upload panel warns that every visitor can see uploaded code.
+- **Other changes:** a `/health` endpoint (no database or AI call), security headers, and a clear error when the connection string is empty. Secrets come only from environment variables, which `render.yaml` marks `sync: false`. The container runs as a non-root user.
+- **Verified:**
+  - Backend **224/224** (5 new `PublicDemoTests`). Frontend 5 contract + **15** component/app tests, and the build passed.
+  - Docker image built (346 MB) and run in hosted mode against local PostgreSQL. Results: `/health` ok, UI served with the expected headers, `system/info` reports `cloudflare` and `publicDemo: true`, `/api/llm/chat` returns 404, asks returned 200, 200, then 429.
+  - Not yet run: a deploy to Render, and a live Cloudflare call from inside the container (the smoke test used dummy credentials).
+- **Environment note:** the local PostgreSQL container had stopped (exit 255) about 11 hours earlier, likely after sleep or a restart. DB tests returned 503 until `docker compose up -d db`.

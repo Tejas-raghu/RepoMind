@@ -12,7 +12,9 @@ AI codebase intelligence that runs locally. Upload a repository ZIP, then:
 Stack: Vue 3 + TypeScript + Vite · ASP.NET Core (.NET 10) · PostgreSQL 17 +
 pgvector · Ollama (`embeddinggemma`, `qwen3:4b`). Cloudflare Workers AI is an
 optional, off-by-default provider. This is a 30-day learning and portfolio
-project for local, single-user use; it has no authentication.
+project for local, single-user use; it has no authentication. A rate-limited
+public demo can be hosted for free as one Docker container
+([docs/deployment.md](docs/deployment.md)).
 
 | Document | Contents |
 |---|---|
@@ -21,6 +23,7 @@ project for local, single-user use; it has no authentication.
 | [docs/testing.md](docs/testing.md) | Test layers and commands, browser E2E, evaluation |
 | [docs/manual-sanity-checklist.md](docs/manual-sanity-checklist.md) | Step-by-step manual verification |
 | [docs/day14-5-cloudflare.md](docs/day14-5-cloudflare.md) | Optional Cloudflare provider |
+| [docs/deployment.md](docs/deployment.md) | Free hosted demo: Docker, Render, Neon, rate limits |
 | [PROGRESS.md](PROGRESS.md) | Verified progress log with measured results |
 
 ## Quick start (Windows PowerShell)

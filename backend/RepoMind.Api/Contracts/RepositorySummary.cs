@@ -8,4 +8,4 @@ public sealed record RepositorySummary(long Id, string Name)
 }
 
 public sealed record SystemInfoResponse(string Provider, string EmbeddingModel, string ChatModel,
-    bool RerankingEnabled, bool AgentModelPlanning);
+    bool RerankingEnabled, bool AgentModelPlanning, bool PublicDemo);
