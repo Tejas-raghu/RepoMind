@@ -253,3 +253,21 @@
   - Docker image built (346 MB) and run in hosted mode against local PostgreSQL. Results: `/health` ok, UI served with the expected headers, `system/info` reports `cloudflare` and `publicDemo: true`, `/api/llm/chat` returns 404, asks returned 200, 200, then 429.
   - Not yet run: a deploy to Render, and a live Cloudflare call from inside the container (the smoke test used dummy credentials).
 - **Environment note:** the local PostgreSQL container had stopped (exit 255) about 11 hours earlier, likely after sleep or a restart. DB tests returned 503 until `docker compose up -d db`.
+
+## Deployed: public demo live (2026-11-24)
+
+- **URL:** https://repomind-e10o.onrender.com/. Render free web service in Singapore (Docker, `render.yaml` Blueprint), Neon Postgres in AWS ap-southeast-1 (1 GB free storage), Cloudflare Workers AI `gpt-oss-20b`.
+- **Setup:**
+  - The Neon tables were created with the five `database/*.sql` scripts through `psql` in the pgvector image.
+  - The home router's DNS (192.168.29.1) refused the Neon host name. Public DNS resolved it, so `--dns 1.1.1.1` on the `docker run` fixed it; this is now in `docs/deployment.md`.
+  - `region: singapore` was added to `render.yaml` so the app sits next to the database.
+  - The three secrets were entered only in Render.
+- **Live verification** (from outside, over HTTPS):
+  - `/health` ok. The UI was served with the expected security headers, and HTTP redirected (301) to HTTPS.
+  - `system/info`: `cloudflare` and `publicDemo: true`. `/api/llm/chat` returned 404.
+  - The TaskTrail upload indexed 12 files and 13 chunks in 4.9 s, as repository #1, preloaded for visitors.
+  - "Where is the Bearer token added to requests?" answered, citing `apiClient.ts`.
+  - "Review src/router/guards.ts for security issues" completed with 2 findings citing `guards.ts` lines.
+  - "How are protected routes secured?" answered in 7.4 s.
+  - "Explain how overdue tasks are identified" (analysis) completed in 15.9 s.
+- **Latency:** the first two AI requests took 51 s and 22 s. The traces put nearly all of it in the Cloudflare model call (`rag_answer` 50.9 s, `synthesize` 22.2 s); RepoMind's own steps took under 0.5 s. Warm requests were 7–16 s. Separately, the Render free instance sleeps after about 15 idle minutes, and waking it takes about a minute.

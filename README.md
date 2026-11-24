@@ -1,5 +1,9 @@
 # RepoMind
 
+**Live demo: https://repomind-e10o.onrender.com/**. The TaskTrail sample is
+preloaded. It runs on free tiers, so the first visit after a quiet period takes about a
+minute to wake up, and usage is rate-limited.
+
 AI codebase intelligence that runs locally. Upload a repository ZIP, then:
 
 - **ask** anything in one box: a Supervisor routes "where/how" questions to a
