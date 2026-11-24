@@ -6,7 +6,7 @@ built Vue UI, so the site has a single URL and needs no CORS configuration.
 | Part | Service | Free-tier notes |
 |---|---|---|
 | App container (API + UI) | [Render](https://render.com) web service | Sleeps after about 15 minutes without visitors. The first request after that takes about a minute while it starts. |
-| PostgreSQL + pgvector | [Neon](https://neon.tech) | About 0.5 GB of storage. Its compute also pauses when idle and resumes quickly. |
+| PostgreSQL + pgvector | [Neon](https://neon.tech) | 1 GB of storage per project, which holds hundreds of typical uploads. Its compute also pauses when idle and resumes quickly. |
 | Embeddings and chat model | Cloudflare Workers AI | Daily free allowance of neurons. On the Workers **Free** plan, requests beyond it fail until the next day instead of being billed. |
 
 Free hosting has no GPU, so the hosted demo uses the Cloudflare provider. Ollama stays
@@ -36,7 +36,7 @@ Default limits (change them with environment variables such as `Demo__AsksPerDay
 
 ## 1. Create the Neon database
 
-1. Sign up at neon.tech and create a project. Pick the region closest to your Render region (for example Singapore for both).
+1. Sign up at neon.tech and create a project in **AWS Asia Pacific (Singapore)**, the region `render.yaml` uses. If you pick another region, change `region:` in `render.yaml` to the nearest Render region.
 2. In **Connect**, turn **off** connection pooling, so you get the direct host without `-pooler`.
 3. Copy two forms of the connection string:
    - the **psql** URL, `postgresql://USER:PASSWORD@HOST/neondb?sslmode=require`, used to create the tables;
@@ -51,6 +51,10 @@ Default limits (change them with environment variables such as `Demo__AsksPerDay
    ```
 
    The scripts use `IF NOT EXISTS`, so running them twice is harmless. Neon supports the `vector` extension.
+
+   If psql reports `could not translate host name`, your router's DNS is refusing the Neon
+   name, which happens on some home routers. Add `--dns 1.1.1.1` after `docker run --rm -i` to use
+   Cloudflare's public DNS for that command. Render is not affected.
 
 ## 2. Cloudflare credentials
 
@@ -103,6 +107,6 @@ because no proxy adds `X-Forwarded-For`.
   DELETE FROM repositories WHERE id = 42;
   ```
 
-- **Storage:** check usage in the Neon dashboard now and then. 30 uploads a day is far below the free limit for a while, but uploads are not deleted automatically.
+- **Storage:** measured locally, a chunk takes about 6–10 KB and an agent run 1.4–5 KB, so asks are negligible and uploads dominate. A typical small repository is about 2 MB, while a maximum-size upload (10 MB of code) could approach 60 MB. Uploads are not deleted automatically, so check usage in the Neon dashboard now and then. To be stricter, set `Demo__UploadsPerDay` lower in Render. A full database only makes new uploads fail; the free plan never charges.
 - **Logs:** use the Render dashboard → Logs. Secrets are never logged.
 - **Limitation:** client IPs come from the proxy's `X-Forwarded-For` header. If the platform's proxy chain changes, visitors may share one per-IP bucket. The shared daily cap still protects the quota.

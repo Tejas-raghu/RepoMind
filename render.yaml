@@ -5,6 +5,8 @@ services:
     name: repomind
     runtime: docker
     plan: free
+    # Same region as the Neon database (AWS ap-southeast-1), so queries stay local.
+    region: singapore
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     autoDeploy: false
