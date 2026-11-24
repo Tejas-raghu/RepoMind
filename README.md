@@ -4,6 +4,8 @@
 preloaded. It runs on free tiers, so the first visit after a quiet period takes about a
 minute to wake up, and usage is rate-limited.
 
+![RepoMind demo: ask a question, get an answer with a file citation, and open the cited lines in the code explorer](docs/images/repomind-demo.gif)
+
 AI codebase intelligence that runs locally. Upload a repository ZIP, then:
 
 - **ask** anything in one box: a Supervisor routes "where/how" questions to a
