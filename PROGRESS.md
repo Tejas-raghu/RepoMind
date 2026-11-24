@@ -300,3 +300,16 @@
   - The same `guards.ts` review returned no findings in one run and findings in the next, which is model variability.
   - One evaluation label was corrected: "What happens when an API request from apiClient times out?" is fully answerable from the client code (no timeout set; `fetch` rejects and nothing catches it), so it is now a grounded task.
 - **Tests:** backend **243/243**. Frontend 5 contract tests + 16 component/app tests, and the build passed.
+- **Found on the live site after deploying, and fixed:**
+  - "Where is Stripe payment processing implemented?" came back "completed" (run #20), citing `README.md:25-26`. The answer was truthful ("there is no Stripe code"), but it was not a refusal.
+  - Cause: the model planner timed out (over 60 s), the rule fallback chose README.md (the only file mentioning "payment"), and the handoff accepted the documentation-only result.
+  - Two deterministic guards:
+    - a rule plan that matches only documentation is not relevant;
+    - after a RAG refusal, the analysis result may replace it only if a finding cites a code file (otherwise the trace records `handoff skipped`).
+  - Re-evaluated on `gpt-oss-20b`:
+    - absent topics refused 7/7;
+    - partial-evidence tasks 3/3 (the remote-server phrasing passed this run);
+    - 0 of 27 citations out of range;
+    - one `guards.ts` review hit the 120 s Cloudflare HTTP timeout and fell back to partial.
+  - Backend 244/244.
+- **Follow-up noted:** a Cloudflare request that hits the 120 s HTTP client timeout is recorded with the agent's 240 s model-timeout message.

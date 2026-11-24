@@ -106,7 +106,14 @@ public sealed class AgentSupervisor(RepositorySourceService sources, AgentToolbo
             $"{RetrievalAgent.Name} -> {CodeAnalysisAgent.Name}: no direct evidence for a full answer ({answer.Status}); " +
             "checking the code for a partial answer");
         var analysis = await RunSpecialistAsync(state, decision with { Route = AgentRoute.Analysis }, cancellationToken);
-        if (analysis.Status is not ("completed" or "partial") || analysis.Findings.Count == 0) return result;
+        // Only code-backed findings may replace the RAG refusal; documentation alone is not evidence.
+        if (analysis.Status is not ("completed" or "partial") ||
+            !analysis.Findings.Any(f => f.Citations.Any(c => RetrievalAgent.IsCode(c.FilePath))))
+        {
+            state.Record(Name, "handoff", "skipped", Stopwatch.StartNew(),
+                "no code-backed analysis result; the RAG abstention stands");
+            return result;
+        }
         keep(null); // the shown result is the agent's, not the abstained RAG answer
         return analysis;
     }

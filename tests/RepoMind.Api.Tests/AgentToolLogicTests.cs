@@ -128,6 +128,12 @@ public sealed class AgentToolLogicTests
         var guard = new[] { Hit(4, "src/router/guards.ts", "return { name: 'login', query: { redirect: to.fullPath } }") };
         Assert.False(RetrievalAgent.FallbackPlan("Review the Redis caching layer for bugs", guard).Relevant);
         Assert.True(RetrievalAgent.FallbackPlan("Explain the routes", [Hit(5, "src/router.ts", "const route = 1")]).Relevant);
+
+        // Only documentation matched: a README note is not evidence of an implementation.
+        var docsOnly = RetrievalAgent.FallbackPlan("Where is payment processing implemented?",
+            [Hit(6, "README.md", "Is there payment processing in this repository? (Expected: no supporting code.)")]);
+        Assert.False(docsOnly.Relevant);
+        Assert.Empty(docsOnly.Paths);
     }
 
     [Theory]

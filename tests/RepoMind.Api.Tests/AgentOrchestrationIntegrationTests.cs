@@ -280,6 +280,27 @@ public sealed class AgentOrchestrationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Documentation_only_analysis_cannot_replace_a_rag_refusal()
+    {
+        var rag = new FakeRag(new RagAnswerResponse("insufficient_evidence", "No supplied source directly supports the request.",
+            [], null, null, null));
+        var model = new ScriptedModel(
+            planner: _ => Json("""{"reason":"docs","relevant":true,"paths":["README.md"]}"""),
+            synthesis: _ => Json("""
+                {"summary":"The README says there is no such code.","findings":[
+                  {"title":"README note","detail":"Line 1.","evidenceId":"E1","startLine":1,"endLine":1}],"gaps":[],"coverage":"full"}
+                """));
+        var (supervisor, _) = Create(model, rag: rag);
+
+        var run = await supervisor.RunAsync(repositoryId, "Where is the payment provider configured?", CancellationToken.None);
+
+        Assert.Equal(("question", "abstained"), (run!.Route, run.Status));
+        Assert.Equal("insufficient_evidence", run.Answer?.Status);
+        Assert.Empty(run.Findings);
+        Assert.Contains(run.Trace, t => t.Action == "handoff" && t.Status == "skipped");
+    }
+
+    [Fact]
     public async Task Question_about_an_absent_topic_still_abstains_after_the_handoff()
     {
         var rag = new FakeRag(new RagAnswerResponse("insufficient_evidence", "No supplied source directly supports the request.",

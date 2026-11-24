@@ -220,7 +220,9 @@ public sealed class RetrievalAgent(AgentToolbox tools, IRagAnswerService rag, IA
     }
 
     // Conservative rule plan: a file qualifies only when its search result contains a
-    // subject word from the task. Code files are preferred over documentation.
+    // subject word from the task. Code files are preferred over documentation, and a plan
+    // that found only documentation is not relevant: a README note such as "this repo has
+    // no payment code" is not evidence (observed live after a planner timeout).
     public static TargetPlan FallbackPlan(string task, IReadOnlyList<HybridSearchResult> hits)
     {
         var focus = HybridSearchService.ExtractTerms(task).Where(term => !TaskWords.Contains(term)).ToArray();
@@ -229,7 +231,7 @@ public sealed class RetrievalAgent(AgentToolbox tools, IRagAnswerService rag, IA
         var paths = matching.Select((hit, rank) => (hit, rank))
             .OrderByDescending(item => IsCode(item.hit.FilePath)).ThenBy(item => item.rank)
             .Select(item => item.hit.FilePath).Distinct(StringComparer.Ordinal).Take(AgentRouter.MaxTargets).ToArray();
-        return new TargetPlan(paths.Length > 0, paths, "rules");
+        return new TargetPlan(paths.Any(IsCode), paths.Any(IsCode) ? paths : [], "rules");
 
         // The singular form must match a whole word: "redis" -> "redi" must not match "redirect".
         static bool Contains(string text, string term) =>
@@ -240,7 +242,7 @@ public sealed class RetrievalAgent(AgentToolbox tools, IRagAnswerService rag, IA
 
     private static string Shorten(string message) => message.Length <= 100 ? message : message[..100] + "...";
 
-    private static bool IsCode(string path) =>
+    public static bool IsCode(string path) =>
         Path.GetExtension(path).ToLowerInvariant() is ".cs" or ".ts" or ".tsx" or ".js" or ".jsx" or ".vue";
 
     private static string Describe(TargetPlan plan) => plan.Relevant

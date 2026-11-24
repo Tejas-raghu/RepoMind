@@ -145,8 +145,10 @@ agent:
 evidence, and its evidence check stays strict. When it finds none
 (`insufficient_evidence` or `uncertain`), the Supervisor hands the question to the
 Code Analysis Agent, which reads the related code and reports full, partial or no
-coverage. If that agent also finds nothing, the RAG abstention is what the user
-sees. Example: "How does the tasks API server store a task after createTask sends
+coverage. If that agent also finds nothing, or its findings cite only
+documentation, the RAG abstention is what the user sees. A rule plan that matched
+only documentation counts as "nothing related" too: a README note such as "this
+repo has no payment code" is not evidence. Example: "How does the tasks API server store a task after createTask sends
 it?" returns the client call in `taskService.ts` with the gap "the server-side
 storage is not in this repository". Loosening the evidence check itself was tried
 first and rejected: on `gpt-oss-20b` it accepted a README note as evidence for
